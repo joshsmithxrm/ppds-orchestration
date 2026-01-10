@@ -80,12 +80,60 @@ When workers hit decisions they shouldn't make alone (security, architecture, un
 
 ## Implementation
 
-This repo contains the **conceptual pattern**. Implementation varies by:
-- Language/toolchain (CLI tool, scripts, etc.)
-- Platform (Windows Terminal, tmux, etc.)
-- Project structure
+This repo now contains both the **conceptual pattern** AND a working implementation:
 
-The pattern is the same regardless of implementation.
+### Packages
+
+```
+packages/
+├── core/      # TypeScript library - session management, spawning, file watching
+├── cli/       # CLI tool: `orch spawn 123`, `orch list`, etc.
+└── dashboard/ # Tauri + React dashboard (coming soon)
+```
+
+### Quick Start
+
+```bash
+# Install dependencies
+npm install
+
+# Build packages
+npm run build
+
+# Use the CLI
+npx orch spawn 123    # Spawn a worker for issue #123
+npx orch list         # List active sessions
+npx orch get 123      # Get session details
+npx orch update --id 123 --status working
+npx orch forward 123 "Use JWT instead"
+npx orch cancel 123
+```
+
+### Configuration
+
+Create `orchestration.config.json` in your project root:
+
+```json
+{
+  "version": "1.0",
+  "project": {
+    "github": {
+      "owner": "your-org",
+      "repo": "your-repo"
+    },
+    "worktreePrefix": "your-repo-issue-"
+  }
+}
+```
+
+### Worker Context Files
+
+Each worker worktree contains:
+- `session-context.json` - Static identity (issue, repo, branch)
+- `session-state.json` - Dynamic state (forwarded messages)
+- `.claude/session-prompt.md` - Human-readable workflow
+
+Skills can read `session-context.json` for GitHub context without parsing markdown.
 
 ## Philosophy
 

@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "project": {
+    "github": {
+      "owner": "joshsmithxrm",
+      "repo": "ppds-orchestration"
+    },
+    "worktreeRoot": "..",
+    "worktreePrefix": "ppds-orchestration-issue-"
+  },
+  "worker": {
+    "promptTemplate": ".claude/templates/worker-prompt.md",
+    "statusCommand": "orch update"
+  },
+  "dashboard": {
+    "sessionsDir": "~/.orchestration/ppds-orchestration/sessions",
+    "port": 3847
+  }
+}

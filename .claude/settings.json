@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(npx:*)",
+      "Bash(gh issue:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh repo:*)",
+      "Bash(git:*)",
+      "Bash(node:*)",
+      "Bash(tsc:*)",
+      "mcp__github__*"
+    ]
+  }
+}

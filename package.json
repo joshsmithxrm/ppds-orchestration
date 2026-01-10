@@ -1,0 +1,24 @@
+{
+  "name": "ppds-orchestration",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone orchestration tool for parallel Claude Code workers",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces",
+    "clean": "npm run clean --workspaces"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joshsmithxrm/ppds-orchestration.git"
+  },
+  "author": "Josh Smith",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

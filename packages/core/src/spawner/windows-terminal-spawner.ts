@@ -1,0 +1,113 @@
+import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { WorkerSpawner } from './worker-spawner.js';
+import { WorkerSpawnRequest } from '../session/types.js';
+
+/**
+ * Windows Terminal worker spawner.
+ * Spawns Claude Code workers in new Windows Terminal tabs.
+ */
+export class WindowsTerminalSpawner implements WorkerSpawner {
+  private wtPath: string | null = null;
+
+  getName(): string {
+    return 'Windows Terminal';
+  }
+
+  /**
+   * Checks if Windows Terminal is available.
+   */
+  isAvailable(): boolean {
+    if (this.wtPath !== null) {
+      return true;
+    }
+
+    // Check common Windows Terminal locations
+    const possiblePaths = [
+      'wt.exe', // In PATH
+      path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps', 'wt.exe'),
+    ];
+
+    for (const wtPath of possiblePaths) {
+      try {
+        // Try to execute wt --version to see if it works
+        const result = spawn(wtPath, ['--version'], { stdio: 'ignore' });
+        result.on('error', () => {}); // Ignore errors
+        this.wtPath = wtPath;
+        return true;
+      } catch {
+        // Continue to next path
+      }
+    }
+
+    // Fallback: assume wt is in PATH
+    this.wtPath = 'wt.exe';
+    return process.platform === 'win32';
+  }
+
+  /**
+   * Spawns a Claude Code worker in a new Windows Terminal tab.
+   */
+  async spawn(request: WorkerSpawnRequest): Promise<void> {
+    if (!this.isAvailable()) {
+      throw new Error('Windows Terminal is not available');
+    }
+
+    const tabTitle = `Issue #${request.issueNumber}`;
+
+    // Build the command to run in the new tab
+    // We use claude with the --resume flag to start with the session prompt
+    const claudeCommand = this.buildClaudeCommand(request);
+
+    // Windows Terminal command to open a new tab
+    const args = [
+      'new-tab',
+      '--title', tabTitle,
+      '--startingDirectory', request.workingDirectory,
+      '--', // Separator for the command
+      'cmd', '/k', claudeCommand,
+    ];
+
+    return new Promise((resolve, reject) => {
+      const proc = spawn(this.wtPath || 'wt.exe', args, {
+        detached: true,
+        stdio: 'ignore',
+      });
+
+      proc.on('error', (error) => {
+        reject(new Error(`Failed to spawn Windows Terminal: ${error.message}`));
+      });
+
+      // Don't wait for the process - it's detached
+      proc.unref();
+
+      // Give it a moment to start
+      setTimeout(resolve, 500);
+    });
+  }
+
+  /**
+   * Builds the Claude command to run in the terminal.
+   */
+  private buildClaudeCommand(request: WorkerSpawnRequest): string {
+    // The command reads the session prompt and starts Claude
+    // We use --resume to continue from the prompt file
+    const promptFile = request.promptFilePath.replace(/\\/g, '/');
+
+    // Claude command that reads the prompt file
+    return `claude --resume "${promptFile}"`;
+  }
+}
+
+/**
+ * Creates the appropriate spawner for the current platform.
+ */
+export function createSpawner(): WorkerSpawner {
+  if (process.platform === 'win32') {
+    return new WindowsTerminalSpawner();
+  }
+
+  // TODO: Add support for other platforms (macOS with iTerm, Linux with tmux)
+  throw new Error(`No worker spawner available for platform: ${process.platform}`);
+}

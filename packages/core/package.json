@@ -1,0 +1,35 @@
+{
+  "name": "@ppds-orchestration/core",
+  "version": "0.1.0",
+  "description": "Core orchestration library - session management, spawning, and coordination",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "simple-git": "^3.27.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}
