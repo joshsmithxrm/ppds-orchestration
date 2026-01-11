@@ -1,4 +1,6 @@
-# Claude Orchestration
+# PPDS Orchestration
+
+Part of the [Power Platform Developer Suite](https://github.com/joshsmithxrm/power-platform-developer-suite) ecosystem.
 
 A pattern for coordinating multiple Claude Code sessions working in parallel on a shared codebase.
 
