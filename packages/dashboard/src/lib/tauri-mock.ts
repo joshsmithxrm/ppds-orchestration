@@ -142,6 +142,31 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       );
       return undefined as T;
 
+    case 'spawn_worker': {
+      const issueNumber = args?.issueNumber as number;
+      if (!issueNumber || issueNumber <= 0) {
+        throw new Error('Invalid issue number');
+      }
+
+      const newSessionId = `session-${issueNumber}-${Date.now()}`;
+      const now = new Date().toISOString();
+
+      const newSession: SessionState = {
+        id: newSessionId,
+        issueNumber,
+        issueTitle: `Mock Issue #${issueNumber}`,
+        status: 'registered',
+        branch: `feat/${issueNumber}-mock-feature`,
+        worktreePath: `/mock/worktrees/${issueNumber}`,
+        startedAt: now,
+        lastHeartbeat: now,
+      };
+
+      currentMockSessions = [...currentMockSessions, newSession];
+      console.log('[Mock] Spawned worker:', newSessionId);
+      return newSessionId as T;
+    }
+
     default:
       console.warn(`[Mock] Unknown command: ${cmd}`);
       return undefined as T;

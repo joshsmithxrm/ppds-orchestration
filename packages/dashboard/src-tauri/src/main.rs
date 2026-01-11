@@ -116,6 +116,22 @@ async fn cancel_session(session_id: String) -> Result<(), String> {
     }
 }
 
+/// Tauri command: Spawn a new worker for a GitHub issue
+#[tauri::command]
+async fn spawn_worker(issue_number: i32) -> Result<String, String> {
+    let output = std::process::Command::new("orch")
+        .args(["spawn", &issue_number.to_string()])
+        .output()
+        .map_err(|e| format!("Failed to run orch spawn: {}", e))?;
+
+    if output.status.success() {
+        let session_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(session_id)
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
 /// Start watching the sessions directory for changes
 fn start_session_watcher(app_handle: AppHandle) {
     std::thread::spawn(move || {
@@ -196,7 +212,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_sessions,
             forward_message,
-            cancel_session
+            cancel_session,
+            spawn_worker
         ])
         .setup(|app| {
             // Start watching sessions directory

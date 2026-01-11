@@ -1,8 +1,9 @@
 interface HeaderProps {
   isMockMode?: boolean;
+  onSpawnClick: () => void;
 }
 
-export function Header({ isMockMode }: HeaderProps) {
+export function Header({ isMockMode, onSpawnClick }: HeaderProps) {
   return (
     <header className="bg-dark-surface border-b border-dark-border px-4 py-3">
       <div className="container mx-auto flex items-center justify-between">
@@ -16,8 +17,14 @@ export function Header({ isMockMode }: HeaderProps) {
             </span>
           )}
         </div>
-        <div className="text-sm text-dark-muted">
-          ppds-orchestration
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onSpawnClick}
+            className="px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
+          >
+            + Spawn Worker
+          </button>
+          <span className="text-sm text-dark-muted">ppds-orchestration</span>
         </div>
       </div>
     </header>
