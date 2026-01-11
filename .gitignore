@@ -11,6 +11,11 @@ dist/
 *.swp
 *.swo
 
+# Claude Code
+.claude/settings.local.json
+.playwright-mcp/
+nul
+
 # OS files
 .DS_Store
 Thumbs.db
