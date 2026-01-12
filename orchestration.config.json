@@ -11,7 +11,7 @@
   },
   "worker": {
     "promptTemplate": ".claude/templates/worker-prompt.md",
-    "cliCommand": "node \"C:/VS/ppdsw/ppds-orchestration/packages/cli/dist/index.js\""
+    "cliCommand": "orch"
   },
   "dashboard": {
     "sessionsDir": "~/.orchestration/ppds-orchestration/sessions",

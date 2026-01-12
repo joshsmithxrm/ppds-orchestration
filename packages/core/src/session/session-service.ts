@@ -401,7 +401,7 @@ export class SessionService {
   /**
    * Acknowledges a forwarded message, clearing it from the session.
    */
-  async acknowledgeMessage(sessionId: string): Promise<void> {
+  async acknowledgeMessage(sessionId: string): Promise<SessionState> {
     const session = await this.store.load(sessionId);
 
     if (!session) {
@@ -425,6 +425,8 @@ export class SessionService {
         lastUpdated: now,
       });
     }
+
+    return updatedSession;
   }
 
   /**
@@ -576,7 +578,7 @@ cat session-state.json | jq -r '.forwardedMessage // empty'
 
 **If message exists:**
 1. Read and incorporate the guidance into your approach
-2. Acknowledge receipt: \`${cli} ack --id ${issueNumber}\`
+2. Acknowledge receipt: \`${cli} ack ${issueNumber}\`
 3. Continue with your work (the guidance may unstick you)
 
 **Important:** When your status is \`stuck\`, check for messages periodically - the orchestrator may have sent guidance that unblocks you.
