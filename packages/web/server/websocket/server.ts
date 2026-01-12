@@ -1,0 +1,105 @@
+import { WebSocketServer, WebSocket } from 'ws';
+import { MultiRepoService } from '../services/multi-repo-service.js';
+
+interface WSMessage {
+  type: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Set up WebSocket server for real-time updates.
+ */
+export function setupWebSocket(
+  wss: WebSocketServer,
+  multiRepoService: MultiRepoService
+): void {
+  const clients = new Set<WebSocket>();
+
+  wss.on('connection', (ws) => {
+    console.log('WebSocket client connected');
+    clients.add(ws);
+
+    ws.on('message', (data) => {
+      try {
+        const message: WSMessage = JSON.parse(data.toString());
+        handleClientMessage(ws, message, multiRepoService);
+      } catch (error) {
+        console.error('Invalid WebSocket message:', error);
+      }
+    });
+
+    ws.on('close', () => {
+      console.log('WebSocket client disconnected');
+      clients.delete(ws);
+    });
+
+    ws.on('error', (error) => {
+      console.error('WebSocket error:', error);
+      clients.delete(ws);
+    });
+
+    // Send initial connection message
+    ws.send(JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() }));
+  });
+
+  // Register for session events
+  multiRepoService.onSessionEvent((event, repoId, session, sessionId) => {
+    const message = JSON.stringify({
+      type: `session:${event}`,
+      repoId,
+      session,
+      sessionId,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Broadcast to all connected clients
+    for (const client of clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    }
+  });
+
+  // Set up periodic status broadcast (polling fallback)
+  setInterval(async () => {
+    try {
+      const sessions = await multiRepoService.listAllSessions();
+      const message = JSON.stringify({
+        type: 'sessions:snapshot',
+        sessions,
+        timestamp: new Date().toISOString(),
+      });
+
+      for (const client of clients) {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(message);
+        }
+      }
+    } catch (error) {
+      console.error('Error broadcasting sessions:', error);
+    }
+  }, 5000); // Broadcast every 5 seconds
+}
+
+/**
+ * Handle incoming client messages.
+ */
+function handleClientMessage(
+  _ws: WebSocket,
+  message: WSMessage,
+  _multiRepoService: MultiRepoService
+): void {
+  switch (message.type) {
+    case 'ping':
+      // Heartbeat - no action needed
+      break;
+
+    case 'subscribe:repo':
+      // Future: track per-client subscriptions
+      console.log('Client subscribed to repo:', message.repoId);
+      break;
+
+    default:
+      console.log('Unknown message type:', message.type);
+  }
+}

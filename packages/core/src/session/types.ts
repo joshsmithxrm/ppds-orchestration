@@ -1,6 +1,14 @@
 import { z } from 'zod';
 
 /**
+ * Execution mode for a session.
+ * - 'single': Worker runs autonomously until PR (current behavior)
+ * - 'ralph': Worker completes one task, exits, and is re-spawned for next task
+ */
+export const ExecutionMode = z.enum(['single', 'ralph']);
+export type ExecutionMode = z.infer<typeof ExecutionMode>;
+
+/**
  * Session lifecycle status.
  * Matches the C# SessionStatus enum from PPDS.
  */
@@ -51,6 +59,9 @@ export const SessionState = z.object({
 
   /** Current session status. */
   status: SessionStatus,
+
+  /** Execution mode: 'single' (autonomous) or 'ralph' (iterative loop). */
+  mode: ExecutionMode.default('single'),
 
   /** Git branch name for this session. */
   branch: z.string(),

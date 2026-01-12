@@ -25,6 +25,7 @@ describe('SessionStore', () => {
     issueNumber,
     issueTitle: `Test issue #${issueNumber}`,
     status: 'working',
+    mode: 'single',
     branch: `issue-${issueNumber}`,
     worktreePath: `/tmp/test-worktree-${issueNumber}`,
     startedAt: new Date().toISOString(),
