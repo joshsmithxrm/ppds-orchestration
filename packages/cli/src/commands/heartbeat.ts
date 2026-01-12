@@ -1,7 +1,17 @@
+import chalk from 'chalk';
 import { createSessionService } from '@ppds-orchestration/core';
 
-export async function heartbeatCommand(sessionId: string): Promise<void> {
+export async function heartbeatCommand(
+  sessionId: string,
+  options: { quiet?: boolean }
+): Promise<void> {
   const service = await createSessionService();
-  await service.heartbeat(sessionId);
-  // Silent success - heartbeats are meant to be quiet
+  const result = await service.heartbeat(sessionId);
+
+  if (!options.quiet) {
+    console.log(chalk.green('✓ Heartbeat recorded'));
+    if (result.hasMessage) {
+      console.log(chalk.yellow('  You have a forwarded message - check session-state.json'));
+    }
+  }
 }

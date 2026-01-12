@@ -9,8 +9,27 @@ import { updateCommand } from './commands/update.js';
 import { forwardCommand } from './commands/forward.js';
 import { cancelCommand } from './commands/cancel.js';
 import { heartbeatCommand } from './commands/heartbeat.js';
+import { ackCommand } from './commands/ack.js';
+import { pauseCommand } from './commands/pause.js';
+import { resumeCommand } from './commands/resume.js';
 
 const program = new Command();
+
+/**
+ * Wraps a command action with standard error handling.
+ */
+function withErrorHandling<T extends unknown[]>(
+  action: (...args: T) => Promise<void>
+): (...args: T) => Promise<void> {
+  return async (...args: T) => {
+    try {
+      await action(...args);
+    } catch (error) {
+      console.error(chalk.red(`Error: ${(error as Error).message}`));
+      process.exit(1);
+    }
+  };
+}
 
 program
   .name('orch')
@@ -21,14 +40,9 @@ program
 program
   .command('spawn <issue>')
   .description('Spawn a new worker for a GitHub issue')
-  .action(async (issue: string) => {
-    try {
-      await spawnCommand(parseInt(issue, 10));
-    } catch (error) {
-      console.error(chalk.red(`Error: ${(error as Error).message}`));
-      process.exit(1);
-    }
-  });
+  .action(withErrorHandling(async (issue: string) => {
+    await spawnCommand(parseInt(issue, 10));
+  }));
 
 // list command
 program
@@ -37,28 +51,14 @@ program
   .description('List all active sessions')
   .option('-a, --all', 'Include completed and cancelled sessions')
   .option('--json', 'Output as JSON')
-  .action(async (options: { all?: boolean; json?: boolean }) => {
-    try {
-      await listCommand(options);
-    } catch (error) {
-      console.error(chalk.red(`Error: ${(error as Error).message}`));
-      process.exit(1);
-    }
-  });
+  .action(withErrorHandling(listCommand));
 
 // get command
 program
   .command('get <session>')
   .description('Get details of a specific session')
   .option('--json', 'Output as JSON')
-  .action(async (session: string, options: { json?: boolean }) => {
-    try {
-      await getCommand(session, options);
-    } catch (error) {
-      console.error(chalk.red(`Error: ${(error as Error).message}`));
-      process.exit(1);
-    }
-  });
+  .action(withErrorHandling(getCommand));
 
 // update command
 program
@@ -68,72 +68,60 @@ program
   .requiredOption('--status <status>', 'New status')
   .option('--reason <reason>', 'Reason for stuck status')
   .option('--pr <url>', 'Pull request URL')
-  .action(async (options: { id: string; status: string; reason?: string; pr?: string }) => {
-    try {
-      await updateCommand(options);
-    } catch (error) {
-      console.error(chalk.red(`Error: ${(error as Error).message}`));
-      process.exit(1);
-    }
-  });
+  .action(withErrorHandling(updateCommand));
 
 // forward command
 program
   .command('forward <session> <message>')
   .description('Forward guidance to a worker')
-  .action(async (session: string, message: string) => {
-    try {
-      await forwardCommand(session, message);
-    } catch (error) {
-      console.error(chalk.red(`Error: ${(error as Error).message}`));
-      process.exit(1);
-    }
-  });
+  .action(withErrorHandling(forwardCommand));
 
 // cancel command
 program
   .command('cancel <session>')
   .description('Cancel a session')
   .option('--keep-worktree', 'Keep the worktree for debugging')
-  .action(async (session: string, options: { keepWorktree?: boolean }) => {
-    try {
-      await cancelCommand(session, options);
-    } catch (error) {
-      console.error(chalk.red(`Error: ${(error as Error).message}`));
-      process.exit(1);
-    }
-  });
+  .action(withErrorHandling(cancelCommand));
 
 // cancel-all command
 program
   .command('cancel-all')
   .description('Cancel all active sessions')
   .option('--keep-worktrees', 'Keep worktrees for debugging')
-  .action(async (options: { keepWorktrees?: boolean }) => {
-    try {
-      const { createSessionService } = await import('@ppds-orchestration/core');
-      const service = await createSessionService();
-      const count = await service.cancelAll({ keepWorktrees: options.keepWorktrees });
-      console.log(chalk.yellow(`Cancelled ${count} session(s)`));
-    } catch (error) {
-      console.error(chalk.red(`Error: ${(error as Error).message}`));
-      process.exit(1);
-    }
-  });
+  .action(withErrorHandling(async (options: { keepWorktrees?: boolean }) => {
+    const { createSessionService } = await import('@ppds-orchestration/core');
+    const service = await createSessionService();
+    const count = await service.cancelAll({ keepWorktrees: options.keepWorktrees });
+    console.log(chalk.yellow(`Cancelled ${count} session(s)`));
+  }));
 
 // heartbeat command
 program
   .command('heartbeat')
   .description('Send a heartbeat for a session')
   .requiredOption('--id <session>', 'Session ID')
-  .action(async (options: { id: string }) => {
-    try {
-      await heartbeatCommand(options.id);
-    } catch (error) {
-      console.error(chalk.red(`Error: ${(error as Error).message}`));
-      process.exit(1);
-    }
-  });
+  .option('-q, --quiet', 'Suppress output (for automated use)')
+  .action(withErrorHandling(async (options: { id: string; quiet?: boolean }) => {
+    await heartbeatCommand(options.id, { quiet: options.quiet });
+  }));
+
+// ack command
+program
+  .command('ack <session>')
+  .description('Acknowledge a forwarded message')
+  .action(withErrorHandling(ackCommand));
+
+// pause command
+program
+  .command('pause <session>')
+  .description('Pause a session')
+  .action(withErrorHandling(pauseCommand));
+
+// resume command
+program
+  .command('resume <session>')
+  .description('Resume a paused session')
+  .action(withErrorHandling(resumeCommand));
 
 // dashboard command (placeholder)
 program
