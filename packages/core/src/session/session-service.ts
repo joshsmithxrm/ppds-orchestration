@@ -9,6 +9,7 @@ import {
   SessionDynamicState,
   SessionListResult,
   WorktreeStatus,
+  ExecutionMode,
   STALE_THRESHOLD_MS,
 } from './types.js';
 import { SessionStore } from './session-store.js';
@@ -46,6 +47,16 @@ export interface SessionServiceConfig {
 }
 
 /**
+ * Options for spawning a new worker session.
+ */
+export interface SpawnOptions {
+  /** Execution mode: 'single' (autonomous) or 'ralph' (iterative). Default: 'single'. */
+  mode?: ExecutionMode;
+  /** Additional prompt sections to inject (from hooks). */
+  additionalPromptSections?: string[];
+}
+
+/**
  * Service for managing parallel worker sessions.
  * Port of PPDS SessionService.cs to TypeScript.
  */
@@ -65,8 +76,9 @@ export class SessionService {
   /**
    * Spawns a new worker session for an issue.
    */
-  async spawn(issueNumber: number): Promise<SessionState> {
+  async spawn(issueNumber: number, options?: SpawnOptions): Promise<SessionState> {
     const sessionId = issueNumber.toString();
+    const mode = options?.mode ?? 'single';
 
     // Check if session already exists
     if (this.store.exists(sessionId)) {
@@ -99,7 +111,9 @@ export class SessionService {
       issueNumber,
       issueInfo.title,
       issueInfo.body,
-      branchName
+      branchName,
+      mode,
+      options?.additionalPromptSections
     );
 
     // Write session context (static identity file)
@@ -135,6 +149,7 @@ export class SessionService {
       issueNumber,
       issueTitle: issueInfo.title,
       status: 'registered',
+      mode,
       branch: branchName,
       worktreePath,
       startedAt: now,
@@ -144,21 +159,21 @@ export class SessionService {
     await this.store.save(session);
 
     // Spawn worker
-    try {
-      await this.spawner.spawn({
-        sessionId,
-        issueNumber,
-        issueTitle: issueInfo.title,
-        workingDirectory: worktreePath,
-        promptFilePath: promptPath,
-        githubOwner: this.config.githubOwner,
-        githubRepo: this.config.githubRepo,
-      });
-    } catch (error) {
+    const spawnResult = await this.spawner.spawn({
+      sessionId,
+      issueNumber,
+      issueTitle: issueInfo.title,
+      workingDirectory: worktreePath,
+      promptFilePath: promptPath,
+      githubOwner: this.config.githubOwner,
+      githubRepo: this.config.githubRepo,
+    });
+
+    if (!spawnResult.success) {
       // Clean up on failure
       await this.store.delete(sessionId);
       await this.gitUtils.removeWorktree(worktreePath);
-      throw error;
+      throw new Error(spawnResult.error ?? 'Failed to spawn worker');
     }
 
     // Update to working status
@@ -510,7 +525,9 @@ export class SessionService {
     issueNumber: number,
     title: string,
     body: string,
-    branchName: string
+    branchName: string,
+    mode: ExecutionMode = 'single',
+    additionalPromptSections?: string[]
   ): Promise<string> {
     const claudeDir = path.join(worktreePath, '.claude');
 
@@ -520,7 +537,7 @@ export class SessionService {
 
     const promptPath = path.join(claudeDir, 'session-prompt.md');
     const cli = this.config.cliCommand ?? 'orch';
-    const prompt = `# Session: Issue #${issueNumber}
+    let prompt = `# Session: Issue #${issueNumber}
 
 ## Repository Context
 
@@ -603,6 +620,35 @@ Example: \`${cli} update --id ${issueNumber} --status stuck --reason "Need auth 
 - Build must pass before shipping
 - Tests must pass before shipping
 `;
+
+    // Add mode-specific instructions for Ralph loop
+    if (mode === 'ralph') {
+      prompt += `
+## Ralph Loop Mode
+
+This session is running in **Ralph loop mode**. This means:
+- You will work on ONE task from the implementation plan, then exit
+- The orchestrator will re-spawn you for the next task
+- Each spawn is a fresh context - you won't remember previous iterations
+
+**Each iteration:**
+1. Read \`.claude/worker-plan.md\` for the implementation plan
+2. Find the next incomplete task
+3. Complete that single task
+4. Commit your changes
+5. Update status: \`${cli} update --id ${issueNumber} --status complete\`
+6. Exit (the orchestrator will re-spawn you if more tasks remain)
+
+**Important:** Do NOT try to complete all tasks in one go. Complete exactly ONE task per iteration.
+`;
+    }
+
+    // Add additional prompt sections from hooks
+    if (additionalPromptSections && additionalPromptSections.length > 0) {
+      prompt += '\n## Additional Instructions\n\n';
+      prompt += additionalPromptSections.join('\n\n');
+      prompt += '\n';
+    }
 
     await fs.promises.writeFile(promptPath, prompt, 'utf-8');
     return promptPath;
