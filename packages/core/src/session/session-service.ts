@@ -366,8 +366,9 @@ export class SessionService {
 
   /**
    * Records a heartbeat from a worker.
+   * Returns whether a forwarded message is waiting.
    */
-  async heartbeat(sessionId: string): Promise<void> {
+  async heartbeat(sessionId: string): Promise<{ recorded: boolean; hasMessage: boolean }> {
     const session = await this.store.load(sessionId);
 
     if (!session) {
@@ -380,6 +381,40 @@ export class SessionService {
     };
 
     await this.store.save(updatedSession);
+
+    return {
+      recorded: true,
+      hasMessage: !!session.forwardedMessage,
+    };
+  }
+
+  /**
+   * Acknowledges a forwarded message, clearing it from the session.
+   */
+  async acknowledgeMessage(sessionId: string): Promise<void> {
+    const session = await this.store.load(sessionId);
+
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found`);
+    }
+
+    const now = new Date().toISOString();
+    const updatedSession: SessionState = {
+      ...session,
+      forwardedMessage: undefined,
+      lastHeartbeat: now,
+    };
+
+    await this.store.save(updatedSession);
+
+    // Clear in worktree state file too
+    if (fs.existsSync(session.worktreePath)) {
+      await this.store.writeSessionState(session.worktreePath, {
+        status: session.status,
+        forwardedMessage: undefined,
+        lastUpdated: now,
+      });
+    }
   }
 
   /**
@@ -516,11 +551,24 @@ ${body}
 5. Write your plan to \`.claude/worker-plan.md\`
 6. **Then:** \`orch update --id ${issueNumber} --status planning_complete\`
 
-### Phase 2: Check for Messages
-Before implementing, check for forwarded messages:
-- Read \`session-state.json\` (at worktree root) if it exists
-- If \`forwardedMessage\` field exists, incorporate it
-- Then continue to implementation
+### Message Check Protocol
+
+Check for forwarded messages at these points:
+1. **After each phase** - planning complete, before implementation, after tests
+2. **When stuck** - check every 5 minutes while waiting for guidance
+3. **Before major decisions** - architectural choices, security implementations
+
+**How to check:**
+\`\`\`bash
+cat session-state.json | jq -r '.forwardedMessage // empty'
+\`\`\`
+
+**If message exists:**
+1. Read and incorporate the guidance into your approach
+2. Acknowledge receipt: \`orch ack --id ${issueNumber}\`
+3. Continue with your work (the guidance may unstick you)
+
+**Important:** When your status is \`stuck\`, check for messages periodically - the orchestrator may have sent guidance that unblocks you.
 
 ### Phase 3: Implementation
 1. **First:** \`orch update --id ${issueNumber} --status working\`

@@ -9,6 +9,9 @@ import { updateCommand } from './commands/update.js';
 import { forwardCommand } from './commands/forward.js';
 import { cancelCommand } from './commands/cancel.js';
 import { heartbeatCommand } from './commands/heartbeat.js';
+import { ackCommand } from './commands/ack.js';
+import { pauseCommand } from './commands/pause.js';
+import { resumeCommand } from './commands/resume.js';
 
 const program = new Command();
 
@@ -126,9 +129,49 @@ program
   .command('heartbeat')
   .description('Send a heartbeat for a session')
   .requiredOption('--id <session>', 'Session ID')
-  .action(async (options: { id: string }) => {
+  .option('-q, --quiet', 'Suppress output (for automated use)')
+  .action(async (options: { id: string; quiet?: boolean }) => {
     try {
-      await heartbeatCommand(options.id);
+      await heartbeatCommand(options.id, { quiet: options.quiet });
+    } catch (error) {
+      console.error(chalk.red(`Error: ${(error as Error).message}`));
+      process.exit(1);
+    }
+  });
+
+// ack command
+program
+  .command('ack <session>')
+  .description('Acknowledge a forwarded message')
+  .action(async (session: string) => {
+    try {
+      await ackCommand(session);
+    } catch (error) {
+      console.error(chalk.red(`Error: ${(error as Error).message}`));
+      process.exit(1);
+    }
+  });
+
+// pause command
+program
+  .command('pause <session>')
+  .description('Pause a session')
+  .action(async (session: string) => {
+    try {
+      await pauseCommand(session);
+    } catch (error) {
+      console.error(chalk.red(`Error: ${(error as Error).message}`));
+      process.exit(1);
+    }
+  });
+
+// resume command
+program
+  .command('resume <session>')
+  .description('Resume a paused session')
+  .action(async (session: string) => {
+    try {
+      await resumeCommand(session);
     } catch (error) {
       console.error(chalk.red(`Error: ${(error as Error).message}`));
       process.exit(1);
