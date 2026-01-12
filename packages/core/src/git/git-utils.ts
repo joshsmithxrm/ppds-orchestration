@@ -83,17 +83,31 @@ export class GitUtils {
   }
 
   /**
-   * Creates a git worktree with a new branch.
+   * Creates a git worktree with a new branch from a base ref.
+   * @param worktreePath - Path for the new worktree
+   * @param branchName - Name of the new branch to create
+   * @param baseBranch - Base ref to branch from (default: 'origin/main')
    */
-  async createWorktree(worktreePath: string, branchName: string): Promise<void> {
+  async createWorktree(
+    worktreePath: string,
+    branchName: string,
+    baseBranch = 'origin/main'
+  ): Promise<void> {
     // Remove existing worktree if present
     if (fs.existsSync(worktreePath)) {
       await this.removeWorktree(worktreePath);
     }
 
+    // Fetch latest from origin to ensure we have the base branch
     try {
-      // Try to create with new branch
-      await this.git.raw(['worktree', 'add', worktreePath, '-b', branchName]);
+      await this.git.fetch('origin');
+    } catch {
+      // Ignore fetch errors (might be offline)
+    }
+
+    try {
+      // Create worktree with new branch from base
+      await this.git.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
     } catch (error) {
       // Branch might already exist, try without -b
       try {

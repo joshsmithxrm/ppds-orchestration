@@ -6,11 +6,12 @@
       "repo": "ppds-orchestration"
     },
     "worktreeRoot": "..",
-    "worktreePrefix": "ppds-orchestration-issue-"
+    "worktreePrefix": "ppds-orchestration-issue-",
+    "baseBranch": "origin/main"
   },
   "worker": {
     "promptTemplate": ".claude/templates/worker-prompt.md",
-    "statusCommand": "orch update"
+    "cliCommand": "node \"C:/VS/ppdsw/ppds-orchestration/packages/cli/dist/index.js\""
   },
   "dashboard": {
     "sessionsDir": "~/.orchestration/ppds-orchestration/sessions",

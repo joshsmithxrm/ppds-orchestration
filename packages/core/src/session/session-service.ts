@@ -37,6 +37,12 @@ export interface SessionServiceConfig {
 
   /** Optional: prefix for worktree directories. */
   worktreePrefix?: string;
+
+  /** Optional: CLI command for workers to use (default: 'orch'). */
+  cliCommand?: string;
+
+  /** Optional: Base branch for worktrees (default: 'origin/main'). */
+  baseBranch?: string;
 }
 
 /**
@@ -81,7 +87,11 @@ export class SessionService {
     const branchName = `issue-${issueNumber}`;
     const worktreePath = path.join(path.dirname(this.config.repoRoot), worktreeName);
 
-    await this.gitUtils.createWorktree(worktreePath, branchName);
+    await this.gitUtils.createWorktree(
+      worktreePath,
+      branchName,
+      this.config.baseBranch ?? 'origin/main'
+    );
 
     // Write worker prompt
     const promptPath = await this.writeWorkerPrompt(
@@ -507,6 +517,7 @@ export class SessionService {
     }
 
     const promptPath = path.join(claudeDir, 'session-prompt.md');
+    const cli = this.config.cliCommand ?? 'orch';
     const prompt = `# Session: Issue #${issueNumber}
 
 ## Repository Context
@@ -534,22 +545,22 @@ ${body}
 
 | Phase | Command |
 |-------|---------|
-| Starting | \`orch update --id ${issueNumber} --status planning\` |
-| Plan complete | \`orch update --id ${issueNumber} --status planning_complete\` |
-| Implementing | \`orch update --id ${issueNumber} --status working\` |
-| Stuck | \`orch update --id ${issueNumber} --status stuck --reason "description"\` |
+| Starting | \`${cli} update --id ${issueNumber} --status planning\` |
+| Plan complete | \`${cli} update --id ${issueNumber} --status planning_complete\` |
+| Implementing | \`${cli} update --id ${issueNumber} --status working\` |
+| Stuck | \`${cli} update --id ${issueNumber} --status stuck --reason "description"\` |
 
 **Note:** \`/ship\` automatically updates status to \`shipping\` → \`reviews_in_progress\` → \`complete\`.
 
 ## Workflow
 
 ### Phase 1: Planning
-1. **First:** \`orch update --id ${issueNumber} --status planning\`
+1. **First:** \`${cli} update --id ${issueNumber} --status planning\`
 2. Read and understand the issue requirements
 3. Explore the codebase to understand existing patterns
 4. Create a detailed implementation plan
 5. Write your plan to \`.claude/worker-plan.md\`
-6. **Then:** \`orch update --id ${issueNumber} --status planning_complete\`
+6. **Then:** \`${cli} update --id ${issueNumber} --status planning_complete\`
 
 ### Message Check Protocol
 
@@ -565,13 +576,13 @@ cat session-state.json | jq -r '.forwardedMessage // empty'
 
 **If message exists:**
 1. Read and incorporate the guidance into your approach
-2. Acknowledge receipt: \`orch ack --id ${issueNumber}\`
+2. Acknowledge receipt: \`${cli} ack --id ${issueNumber}\`
 3. Continue with your work (the guidance may unstick you)
 
 **Important:** When your status is \`stuck\`, check for messages periodically - the orchestrator may have sent guidance that unblocks you.
 
 ### Phase 3: Implementation
-1. **First:** \`orch update --id ${issueNumber} --status working\`
+1. **First:** \`${cli} update --id ${issueNumber} --status working\`
 2. Follow your plan in \`.claude/worker-plan.md\`
 3. Build and test your changes
 4. Create PR via \`/ship\` (handles remaining status updates automatically)
@@ -583,7 +594,7 @@ If you encounter these, set status to \`stuck\` with a clear reason:
 - Breaking changes
 - Data migration
 
-Example: \`orch update --id ${issueNumber} --status stuck --reason "Need auth decision: should we use JWT or session tokens?"\`
+Example: \`${cli} update --id ${issueNumber} --status stuck --reason "Need auth decision: should we use JWT or session tokens?"\`
 
 ## Reference
 - Follow CLAUDE.md for coding standards
@@ -635,5 +646,7 @@ export async function createSessionService(configPath?: string): Promise<Session
     githubRepo: config.project?.github?.repo,
     worktreePrefix: config.project?.worktreePrefix,
     baseDir: config.dashboard?.sessionsDir?.replace('~', os.homedir()),
+    cliCommand: config.worker?.cliCommand ?? 'orch',
+    baseBranch: config.project?.baseBranch ?? 'origin/main',
   });
 }
