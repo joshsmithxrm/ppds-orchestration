@@ -38,3 +38,6 @@ packages/dashboard/src-tauri/target/
 # Session files (local state)
 session-context.json
 session-state.json
+
+# Temp folder
+tmp/
