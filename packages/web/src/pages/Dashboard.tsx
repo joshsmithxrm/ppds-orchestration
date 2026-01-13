@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import SpawnDialog from '../components/SpawnDialog';
+import { useSoundsContext } from '../App';
 
 interface Session {
   id: string;
@@ -58,6 +60,9 @@ function Dashboard() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showSpawnDialog, setShowSpawnDialog] = useState(false);
+  const sounds = useSoundsContext();
+  const prevSessionsRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     const fetchData = async () => {
@@ -89,19 +94,54 @@ function Dashboard() {
     const ws = new WebSocket(`ws://${window.location.host}/ws`);
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === 'session:update') {
+      if (data.type === 'session:add' && data.session) {
+        setSessions((prev) => {
+          // Check if session already exists
+          const exists = prev.some(
+            (s) => s.id === data.sessionId && s.repoId === data.repoId
+          );
+          if (exists) return prev;
+          return [...prev, { ...data.session, repoId: data.repoId }];
+        });
+        // Play spawn sound for new session
+        if (data.session.status === 'working' || data.session.status === 'registered') {
+          sounds?.playOnSpawn();
+        }
+      } else if (data.type === 'session:update' && data.session) {
+        const key = `${data.repoId}:${data.sessionId}`;
+        const prevStatus = prevSessionsRef.current.get(key);
+        const newStatus = data.session.status;
+
+        // Play sounds on status transitions
+        if (prevStatus !== newStatus) {
+          if (newStatus === 'stuck') {
+            sounds?.playOnStuck();
+          } else if (newStatus === 'complete') {
+            sounds?.playOnComplete();
+          }
+          prevSessionsRef.current.set(key, newStatus);
+        }
+
         setSessions((prev) =>
           prev.map((s) =>
-            s.id === data.session.id && s.repoId === data.repoId
-              ? { ...s, ...data.session }
+            s.id === data.sessionId && s.repoId === data.repoId
+              ? { ...data.session, repoId: data.repoId }
               : s
+          )
+        );
+      } else if (data.type === 'session:remove') {
+        const key = `${data.repoId}:${data.sessionId}`;
+        prevSessionsRef.current.delete(key);
+        setSessions((prev) =>
+          prev.filter(
+            (s) => !(s.id === data.sessionId && s.repoId === data.repoId)
           )
         );
       }
     };
 
     return () => ws.close();
-  }, []);
+  }, [sounds]);
 
   const getElapsedTime = (startedAt: string): string => {
     const start = new Date(startedAt).getTime();
@@ -111,6 +151,25 @@ function Dashboard() {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     return `${hours}h ${mins}m`;
+  };
+
+  const handleSpawn = async (
+    repoId: string,
+    issueNumber: number,
+    mode: 'single' | 'ralph'
+  ) => {
+    const res = await fetch(`/api/sessions/${repoId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ issueNumber, mode }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Failed to spawn worker');
+    }
+
+    // Session will be added via WebSocket event
   };
 
   if (loading) {
@@ -140,6 +199,17 @@ function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Header with Spawn Button */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-white">Dashboard</h2>
+        <button
+          onClick={() => setShowSpawnDialog(true)}
+          className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500 transition-colors flex items-center gap-2"
+        >
+          <span>+</span> Spawn Worker
+        </button>
+      </div>
+
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-gray-800 rounded-lg p-4">
@@ -228,6 +298,13 @@ function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Spawn Dialog */}
+      <SpawnDialog
+        isOpen={showSpawnDialog}
+        onClose={() => setShowSpawnDialog(false)}
+        onSpawn={handleSpawn}
+      />
     </div>
   );
 }

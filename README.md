@@ -90,7 +90,7 @@ This repo now contains both the **conceptual pattern** AND a working implementat
 packages/
 ├── core/      # TypeScript library - session management, spawning, file watching
 ├── cli/       # CLI tool: `orch spawn 123`, `orch list`, etc.
-└── dashboard/ # Tauri + React dashboard (coming soon)
+└── web/       # Express + React web dashboard
 ```
 
 ### Quick Start

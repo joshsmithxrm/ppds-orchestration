@@ -56,3 +56,11 @@ export { WindowsTerminalSpawner, createSpawner } from './spawner/windows-termina
 // Session watcher
 export { SessionWatcher } from './watcher/session-watcher.js';
 export type { SessionWatcherEvent, SessionWatcherCallback } from './watcher/session-watcher.js';
+
+// Hook executor
+export { HookExecutor } from './hooks/hook-executor.js';
+export type { HookContext, HookResult } from './hooks/hook-executor.js';
+
+// Process tracker
+export { ProcessTracker } from './process/process-tracker.js';
+export type { TrackedProcess, ProcessExitCallback } from './process/process-tracker.js';
