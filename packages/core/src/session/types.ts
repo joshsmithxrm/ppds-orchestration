@@ -137,7 +137,7 @@ export const SessionDynamicState = z.object({
   status: SessionStatus,
 
   /** Message forwarded from orchestrator. */
-  forwardedMessage: z.string().optional(),
+  forwardedMessage: z.string().nullable().optional(),
 
   /** When this was last updated (ISO timestamp). */
   lastUpdated: z.string().datetime(),
