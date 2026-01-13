@@ -654,13 +654,23 @@ export async function createSessionService(configPath?: string): Promise<Session
     throw new Error('Could not find git repository root');
   }
 
+  // If sessionsDir is provided in config, extract the base orchestration directory.
+  // Config sessionsDir is like ~/.orchestration/{project}/sessions
+  // SessionStore expects baseDir to be ~/.orchestration (the root, without project/sessions)
+  let baseDir: string | undefined;
+  if (config.dashboard?.sessionsDir) {
+    const sessionsDir = config.dashboard.sessionsDir.replace('~', os.homedir());
+    // Go up 2 directories: sessions -> project -> orchestration root
+    baseDir = path.dirname(path.dirname(sessionsDir));
+  }
+
   return new SessionService({
     projectName: config.project?.github?.repo ?? path.basename(repoRoot),
     repoRoot,
     githubOwner: config.project?.github?.owner,
     githubRepo: config.project?.github?.repo,
     worktreePrefix: config.project?.worktreePrefix,
-    baseDir: config.dashboard?.sessionsDir?.replace('~', os.homedir()),
+    baseDir,
     cliCommand: config.worker?.cliCommand ?? 'orch',
     baseBranch: config.project?.baseBranch ?? 'origin/main',
   });

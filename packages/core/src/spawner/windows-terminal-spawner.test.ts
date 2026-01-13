@@ -169,3 +169,9 @@ describe('WorkerSpawner interface', () => {
     }
   });
 });
+
+// Note: These tests verify the CONTENT of generated wrapper scripts.
+// The spawn() method does actually open Windows Terminal tabs, so we can't
+// easily test without side effects. The tests verify script content by
+// checking what gets written to disk. The spawned terminals will fail
+// (temp dir deleted) but that's OK - we only care about the file contents.
