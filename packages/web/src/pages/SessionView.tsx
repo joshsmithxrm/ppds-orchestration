@@ -1,5 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
+import RalphStatus from '../components/RalphStatus';
 
 interface SessionDetail {
   id: string;
@@ -201,6 +202,11 @@ function SessionView() {
           )}
         </div>
       </div>
+
+      {/* Ralph Status (for ralph mode sessions) */}
+      {session.mode === 'ralph' && (
+        <RalphStatus repoId={repoId!} sessionId={sessionId!} />
+      )}
 
       {/* Stuck Reason */}
       {session.stuckReason && (

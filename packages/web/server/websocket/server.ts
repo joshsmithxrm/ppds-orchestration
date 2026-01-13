@@ -78,7 +78,7 @@ export function setupWebSocket(
     } catch (error) {
       console.error('Error broadcasting sessions:', error);
     }
-  }, 5000); // Broadcast every 5 seconds
+  }, 30000); // Fallback broadcast every 30 seconds (real-time via file watchers)
 }
 
 /**

@@ -466,6 +466,13 @@ export class SessionService {
     return now - lastHeartbeat > STALE_THRESHOLD_MS;
   }
 
+  /**
+   * Gets the sessions directory path (for file watching).
+   */
+  getSessionsDir(): string {
+    return this.store.getSessionsDir();
+  }
+
   // ============================================
   // Private helper methods
   // ============================================

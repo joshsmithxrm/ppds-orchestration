@@ -47,6 +47,9 @@ await multiRepoService.initialize();
 // Initialize Ralph loop manager
 const ralphManager = new RalphLoopManager(multiRepoService, centralConfig);
 
+// Start real-time file watching
+multiRepoService.startWatching();
+
 // Store service in app locals for routes
 app.locals.multiRepoService = multiRepoService;
 app.locals.centralConfig = centralConfig;

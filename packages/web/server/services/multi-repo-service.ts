@@ -8,6 +8,7 @@ import {
   GitUtils,
   getRepoEffectiveConfig,
   ExecutionMode,
+  HookExecutor,
 } from '@ppds-orchestration/core';
 
 export interface MultiRepoSession extends SessionState {
@@ -29,6 +30,7 @@ export class MultiRepoService {
   private watchers: Map<string, SessionWatcher> = new Map();
   private config: CentralConfig;
   private eventCallbacks: SessionEventCallback[] = [];
+  private hookExecutor: HookExecutor = new HookExecutor();
 
   constructor(config: CentralConfig) {
     this.config = config;
@@ -212,7 +214,12 @@ export class MultiRepoService {
       additionalPromptSections.push(onTestHook.value);
     }
 
-    return service.spawn(issueNumber, { mode, additionalPromptSections });
+    const session = await service.spawn(issueNumber, { mode, additionalPromptSections });
+
+    // Execute onSpawn command hook after successful spawn
+    await this.executeHook('onSpawn', repoId, session);
+
+    return session;
   }
 
   /**
@@ -225,7 +232,18 @@ export class MultiRepoService {
     options?: { reason?: string; prUrl?: string }
   ): Promise<SessionState> {
     const service = this.getService(repoId);
-    return service.update(sessionId, status, options);
+    const session = await service.update(sessionId, status, options);
+
+    // Execute hooks based on status change
+    if (status === 'stuck') {
+      await this.executeHook('onStuck', repoId, session);
+    } else if (status === 'complete') {
+      await this.executeHook('onComplete', repoId, session);
+    } else if (status === 'shipping' && options?.prUrl) {
+      await this.executeHook('onShip', repoId, session);
+    }
+
+    return session;
   }
 
   /**
@@ -321,9 +339,30 @@ export class MultiRepoService {
    * Start watching all repos for changes.
    */
   startWatching(): void {
-    // This would set up file watchers for each repo's session directory
-    // For now, we'll rely on polling from the client
-    console.log('Session watching started');
+    for (const [repoId, service] of this.services) {
+      try {
+        const sessionsDir = service.getSessionsDir();
+        const watcher = new SessionWatcher(sessionsDir);
+
+        watcher.on((event, session, sessionId) => {
+          // Emit to all registered callbacks
+          for (const callback of this.eventCallbacks) {
+            try {
+              callback(event, repoId, session, sessionId);
+            } catch (error) {
+              console.error(`Session event callback error for ${repoId}:`, error);
+            }
+          }
+        });
+
+        watcher.start();
+        this.watchers.set(repoId, watcher);
+        console.log(`Session watcher started for repo: ${repoId}`);
+      } catch (error) {
+        console.error(`Failed to start watcher for ${repoId}:`, error);
+      }
+    }
+    console.log(`Real-time session watching started for ${this.watchers.size} repos`);
   }
 
   /**
@@ -341,5 +380,40 @@ export class MultiRepoService {
    */
   getConfig(): CentralConfig {
     return this.config;
+  }
+
+  /**
+   * Execute a command hook if configured.
+   */
+  private async executeHook(
+    hookName: string,
+    repoId: string,
+    session: SessionState
+  ): Promise<void> {
+    try {
+      const effectiveConfig = getRepoEffectiveConfig(this.config, repoId);
+      const result = await this.hookExecutor.executeByName(
+        hookName,
+        effectiveConfig.hooks,
+        {
+          session,
+          repoId,
+          worktreePath: session.worktreePath,
+        }
+      );
+
+      if (result) {
+        if (result.success) {
+          console.log(`Hook ${hookName} executed for ${repoId}/${session.id} (${result.duration}ms)`);
+          if (result.output) {
+            console.log(`  Output: ${result.output.slice(0, 200)}`);
+          }
+        } else {
+          console.error(`Hook ${hookName} failed for ${repoId}/${session.id}:`, result.error);
+        }
+      }
+    } catch (error) {
+      console.error(`Error executing hook ${hookName}:`, error);
+    }
   }
 }
