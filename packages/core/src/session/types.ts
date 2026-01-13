@@ -124,6 +124,9 @@ export const SessionContext = z.object({
 
   /** When the session was spawned (ISO timestamp). */
   spawnedAt: z.string().datetime(),
+
+  /** Path to the main session file (workers update this for status). */
+  sessionFilePath: z.string(),
 });
 
 export type SessionContext = z.infer<typeof SessionContext>;

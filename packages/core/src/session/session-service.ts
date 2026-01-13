@@ -603,28 +603,6 @@ If you encounter these, set status to \`stuck\` with a clear reason:
 - Tests must pass before shipping
 `;
 
-    // Add mode-specific instructions for Ralph loop
-    if (mode === 'ralph') {
-      prompt += `
-## Ralph Loop Mode
-
-This session is running in **Ralph loop mode**. This means:
-- You will work on ONE task from the implementation plan, then exit
-- The orchestrator will re-spawn you for the next task
-- Each spawn is a fresh context - you won't remember previous iterations
-
-**Each iteration:**
-1. Read \`.claude/worker-plan.md\` for the implementation plan
-2. Find the next incomplete task
-3. Complete that single task
-4. Commit your changes
-5. Update the session file (from \`session-context.json\` → \`sessionFilePath\`) with \`"status": "complete"\`
-6. The terminal will close automatically (the orchestrator will re-spawn you if more tasks remain)
-
-**Important:** Do NOT try to complete all tasks in one go. Complete exactly ONE task per iteration.
-`;
-    }
-
     // Add additional prompt sections from hooks
     if (additionalPromptSections && additionalPromptSections.length > 0) {
       prompt += '\n## Additional Instructions\n\n';

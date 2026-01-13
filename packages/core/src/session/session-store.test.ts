@@ -166,6 +166,7 @@ describe('SessionStore', () => {
           heartbeat: 'orch heartbeat --id 123',
         },
         spawnedAt: new Date().toISOString(),
+        sessionFilePath: path.join(worktreePath, '..', 'sessions', '123.json'),
       };
 
       await store.writeSessionContext(worktreePath, context);

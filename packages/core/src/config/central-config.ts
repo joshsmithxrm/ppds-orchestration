@@ -93,10 +93,10 @@ export type DoneSignalConfig = z.infer<typeof DoneSignalConfig>;
  * Ralph loop execution settings.
  */
 export const RalphConfig = z.object({
-  /** Maximum iterations before giving up (default: 10) */
-  maxIterations: z.number().default(10),
-  /** Signal indicating Ralph is done */
-  doneSignal: DoneSignalConfig.default({ type: 'status', value: 'complete' }),
+  /** Default number of iterations when not specified at spawn time (default: 10) */
+  defaultIterations: z.number().default(10),
+  /** Optional early-exit signal (file-based by default - won't trigger unless file is created) */
+  doneSignal: DoneSignalConfig.default({ type: 'file', value: '.claude/.ralph-done' }),
   /** Delay between iterations in ms (default: 5000) */
   iterationDelayMs: z.number().default(5000),
 });
@@ -119,6 +119,8 @@ export type DashboardConfig = z.infer<typeof DashboardConfig>;
 export const SoundsConfig = z.object({
   /** Whether sounds are enabled (default: true) */
   enabled: z.boolean().default(true),
+  /** Mute sounds for Ralph loop iterations (default: false) */
+  muteRalph: z.boolean().default(false),
   /** Base directory for sound files (served via /api/sounds) */
   soundsDir: z.string().optional(),
   /** Sound URL for worker spawn events */

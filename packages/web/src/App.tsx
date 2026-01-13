@@ -7,6 +7,7 @@ import SoundToggle from './components/SoundToggle';
 import { useSounds, UseSoundsReturn } from './hooks/useSounds';
 
 interface SoundsConfig {
+  muteRalph?: boolean;
   onSpawn?: string;
   onStuck?: string;
   onComplete?: string;
@@ -14,6 +15,13 @@ interface SoundsConfig {
 
 interface CentralConfig {
   sounds?: SoundsConfig;
+}
+
+// Context for config (needed for muteRalph check)
+const ConfigContext = createContext<CentralConfig | null>(null);
+
+export function useConfigContext(): CentralConfig | null {
+  return useContext(ConfigContext);
 }
 
 // Context for sounds
@@ -36,6 +44,7 @@ function App() {
   const sounds = useSounds(config?.sounds);
 
   return (
+    <ConfigContext.Provider value={config}>
     <SoundsContext.Provider value={sounds}>
       <div className="min-h-screen">
         <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
@@ -63,6 +72,7 @@ function App() {
         </main>
       </div>
     </SoundsContext.Provider>
+    </ConfigContext.Provider>
   );
 }
 

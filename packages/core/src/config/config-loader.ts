@@ -107,8 +107,8 @@ export function getRepoEffectiveConfig(
 
   // Get ralph config with defaults
   const ralph = centralConfig.ralph ?? {
-    maxIterations: 10,
-    doneSignal: { type: 'status' as const, value: 'complete' },
+    defaultIterations: 10,
+    doneSignal: { type: 'file' as const, value: '.claude/.ralph-done' },
     iterationDelayMs: 5000,
   };
 
@@ -157,8 +157,8 @@ export function createDefaultConfig(): CentralConfig {
     repos: {},
     hooks: {},
     ralph: {
-      maxIterations: 10,
-      doneSignal: { type: 'status', value: 'complete' },
+      defaultIterations: 10,
+      doneSignal: { type: 'file', value: '.claude/.ralph-done' },
       iterationDelayMs: 5000,
     },
     dashboard: {
