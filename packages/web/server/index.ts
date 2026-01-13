@@ -8,6 +8,7 @@ import { sessionsRouter } from './routes/sessions.js';
 import { reposRouter } from './routes/repos.js';
 import { configRouter } from './routes/config.js';
 import { ralphRouter } from './routes/ralph.js';
+import { soundsRouter } from './routes/sounds.js';
 import { setupWebSocket } from './websocket/server.js';
 import { MultiRepoService } from './services/multi-repo-service.js';
 import { RalphLoopManager } from './services/ralph-loop-manager.js';
@@ -60,6 +61,7 @@ app.use('/api/sessions', sessionsRouter);
 app.use('/api/repos', reposRouter);
 app.use('/api/config', configRouter);
 app.use('/api/ralph', ralphRouter);
+app.use('/api/sounds', soundsRouter);
 
 // Health check
 app.get('/api/health', (_req, res) => {
