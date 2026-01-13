@@ -55,15 +55,52 @@ const statusIcons: Record<string, string> = {
   cancelled: '[x]',
 };
 
+type FilterCategory = 'active' | 'stuck' | 'completed';
+
 function Dashboard() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
+  const [activeFilters, setActiveFilters] = useState<Set<FilterCategory>>(
+    new Set(['active', 'stuck'])
+  );
   const sounds = useSoundsContext();
   const config = useConfigContext();
   const prevSessionsRef = useRef<Map<string, string>>(new Map());
+
+  // Map session status to filter category
+  const getSessionCategory = (status: string): FilterCategory | null => {
+    if (status === 'stuck') return 'stuck';
+    if (status === 'complete') return 'completed';
+    if (status === 'cancelled') return null;
+    return 'active';
+  };
+
+  // Toggle a filter on/off
+  const toggleFilter = (filter: FilterCategory) => {
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(filter)) {
+        next.delete(filter);
+      } else {
+        next.add(filter);
+      }
+      return next;
+    });
+  };
+
+  // Get dynamic header label based on active filters
+  const getFilterLabel = () => {
+    const labels: string[] = [];
+    if (activeFilters.has('active')) labels.push('Active');
+    if (activeFilters.has('stuck')) labels.push('Stuck');
+    if (activeFilters.has('completed')) labels.push('Completed');
+    if (labels.length === 0) return 'No Filters Selected';
+    if (labels.length === 3) return 'All Sessions';
+    return `${labels.join(' & ')} Sessions`;
+  };
 
   // Helper to check if sound should play (respects muteRalph)
   const shouldPlaySound = (session: Session | null) => {
@@ -215,9 +252,16 @@ function Dashboard() {
   }
 
   const activeCount = sessions.filter(
-    (s) => !['complete', 'cancelled'].includes(s.status)
+    (s) => !['complete', 'cancelled', 'stuck'].includes(s.status)
   ).length;
   const stuckCount = sessions.filter((s) => s.status === 'stuck').length;
+  const completedCount = sessions.filter((s) => s.status === 'complete').length;
+
+  // Filter sessions based on active filters
+  const filteredSessions = sessions.filter((s) => {
+    const category = getSessionCategory(s.status);
+    return category && activeFilters.has(category);
+  });
 
   return (
     <div className="space-y-6">
@@ -226,32 +270,51 @@ function Dashboard() {
         <h2 className="text-xl font-semibold text-white">Dashboard</h2>
         <button
           onClick={() => setShowSpawnDialog(true)}
-          className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500 transition-colors flex items-center gap-2"
+          className="px-4 py-2 bg-ppds-accent text-ppds-bg font-semibold rounded hover:bg-ppds-accent/80 transition-colors flex items-center gap-2"
         >
           <span>+</span> Spawn Worker
         </button>
       </div>
 
-      {/* Stats */}
+      {/* Stats - clickable filter cards */}
       <div className="grid grid-cols-4 gap-4">
-        <div className="bg-gray-800 rounded-lg p-4">
+        <div className="bg-ppds-card rounded-lg p-4">
           <div className="text-3xl font-bold text-white">{repos.length}</div>
-          <div className="text-sm text-gray-400">Repos</div>
+          <div className="text-sm text-ppds-muted">Repos</div>
         </div>
-        <div className="bg-gray-800 rounded-lg p-4">
-          <div className="text-3xl font-bold text-green-400">{activeCount}</div>
-          <div className="text-sm text-gray-400">Active Workers</div>
-        </div>
-        <div className="bg-gray-800 rounded-lg p-4">
+        <button
+          onClick={() => toggleFilter('active')}
+          className={`bg-ppds-card rounded-lg p-4 text-left transition-all cursor-pointer ${
+            activeFilters.has('active')
+              ? 'ring-2 ring-ppds-accent/50'
+              : 'opacity-60 hover:opacity-80'
+          }`}
+        >
+          <div className="text-3xl font-bold text-ppds-accent">{activeCount}</div>
+          <div className="text-sm text-ppds-muted">Active Workers</div>
+        </button>
+        <button
+          onClick={() => toggleFilter('stuck')}
+          className={`bg-ppds-card rounded-lg p-4 text-left transition-all cursor-pointer ${
+            activeFilters.has('stuck')
+              ? 'ring-2 ring-red-500/50'
+              : 'opacity-60 hover:opacity-80'
+          }`}
+        >
           <div className="text-3xl font-bold text-red-400">{stuckCount}</div>
-          <div className="text-sm text-gray-400">Stuck</div>
-        </div>
-        <div className="bg-gray-800 rounded-lg p-4">
-          <div className="text-3xl font-bold text-gray-400">
-            {sessions.filter((s) => s.status === 'complete').length}
-          </div>
-          <div className="text-sm text-gray-400">Completed</div>
-        </div>
+          <div className="text-sm text-ppds-muted">Stuck</div>
+        </button>
+        <button
+          onClick={() => toggleFilter('completed')}
+          className={`bg-ppds-card rounded-lg p-4 text-left transition-all cursor-pointer ${
+            activeFilters.has('completed')
+              ? 'ring-2 ring-ppds-muted/50'
+              : 'opacity-60 hover:opacity-80'
+          }`}
+        >
+          <div className="text-3xl font-bold text-ppds-muted">{completedCount}</div>
+          <div className="text-sm text-ppds-muted">Completed</div>
+        </button>
       </div>
 
       {/* Stuck Alert */}
@@ -264,17 +327,21 @@ function Dashboard() {
       )}
 
       {/* Sessions List */}
-      <div className="bg-gray-800 rounded-lg overflow-hidden">
+      <div className="bg-ppds-card rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-700">
-          <h2 className="text-lg font-semibold text-white">All Sessions</h2>
+          <h2 className="text-lg font-semibold text-white">{getFilterLabel()}</h2>
         </div>
         {sessions.length === 0 ? (
-          <div className="p-8 text-center text-gray-400">
+          <div className="p-8 text-center text-ppds-muted">
             No active sessions. Spawn a worker to get started.
+          </div>
+        ) : filteredSessions.length === 0 ? (
+          <div className="p-8 text-center text-ppds-muted">
+            No sessions match current filters. Click stat cards to adjust.
           </div>
         ) : (
           <div className="divide-y divide-gray-700">
-            {sessions.map((session) => (
+            {filteredSessions.map((session) => (
               <Link
                 key={`${session.repoId}-${session.id}`}
                 to={`/session/${session.repoId}/${session.id}`}

@@ -7,6 +7,12 @@ export default {
   theme: {
     extend: {
       colors: {
+        // PPDS brand colors (from ppds-docs branding)
+        'ppds-bg': '#1e1e1e',
+        'ppds-card': '#252525',
+        'ppds-header': '#141414',
+        'ppds-accent': '#25c2a0',
+        'ppds-muted': '#8b949e',
         // Status colors matching CLI
         'status-registered': '#6b7280',   // gray
         'status-planning': '#3b82f6',     // blue

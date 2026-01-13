@@ -84,18 +84,18 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+      <div className="bg-ppds-card rounded-lg p-6 w-full max-w-md border border-gray-700">
         <h2 className="text-xl font-bold text-white mb-4">Spawn Worker</h2>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Repo Dropdown */}
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Repository</label>
+            <label className="block text-sm text-ppds-muted mb-1">Repository</label>
             <select
               value={selectedRepo}
               onChange={(e) => handleRepoChange(e.target.value)}
-              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+              className="w-full bg-ppds-bg border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-ppds-accent"
             >
               {repos.map((repo) => (
                 <option key={repo.id} value={repo.id}>
@@ -107,28 +107,28 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
 
           {/* Issue Number Input */}
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Issue Number</label>
+            <label className="block text-sm text-ppds-muted mb-1">Issue Number</label>
             <input
               type="number"
               value={issueNumber}
               onChange={(e) => setIssueNumber(e.target.value)}
               placeholder="123"
               min="1"
-              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              className="w-full bg-ppds-bg border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-ppds-accent"
             />
           </div>
 
           {/* Mode Toggle */}
           <div>
-            <label className="block text-sm text-gray-400 mb-2">Execution Mode</label>
+            <label className="block text-sm text-ppds-muted mb-2">Execution Mode</label>
             <div className="flex gap-2">
               <button
                 type="button"
                 onClick={() => setMode('single')}
                 className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
                   mode === 'single'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                    ? 'bg-ppds-accent text-ppds-bg'
+                    : 'bg-ppds-bg text-ppds-muted hover:bg-gray-700'
                 }`}
               >
                 Single
@@ -139,7 +139,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
                 className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
                   mode === 'ralph'
                     ? 'bg-purple-600 text-white'
-                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                    : 'bg-ppds-bg text-ppds-muted hover:bg-gray-700'
                 }`}
               >
                 Ralph
@@ -155,7 +155,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
           {/* Ralph Iterations (only shown when Ralph mode is selected) */}
           {mode === 'ralph' && (
             <div>
-              <label className="block text-sm text-gray-400 mb-1">Iterations</label>
+              <label className="block text-sm text-ppds-muted mb-1">Iterations</label>
               <input
                 type="number"
                 value={iterations}
@@ -163,7 +163,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
                 placeholder="10"
                 min="1"
                 max="100"
-                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                className="w-full bg-ppds-bg border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
               />
               <p className="text-xs text-gray-500 mt-1">
                 Number of times to re-spawn the worker
@@ -183,14 +183,14 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+              className="px-4 py-2 text-ppds-muted hover:text-white transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading || repos.length === 0}
-              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-4 py-2 bg-ppds-accent text-ppds-bg font-medium rounded hover:bg-ppds-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? 'Spawning...' : 'Spawn Worker'}
             </button>
