@@ -140,8 +140,9 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
 
   /**
    * Writes a PowerShell wrapper script that manages Claude's lifecycle.
-   * - Runs Claude as a child process with visible output
-   * - Polls session status and terminates Claude cleanly on complete/cancelled
+   * - Uses a background job to monitor session status
+   * - Runs Claude directly in foreground (blocking, output visible, interactive)
+   * - When status becomes complete/cancelled, kills entire process tree with taskkill
    * - Exits with code 0 to allow Windows Terminal to close the tab
    */
   private async writeWrapperScript(worktreePath: string, claudeCommand: string): Promise<string> {
@@ -162,49 +163,46 @@ if (-not $sessionPath) {
     exit 1
 }
 
-Write-Host "Worker started. Watching for status changes..."
+# Get wrapper script's PID for the background job to kill
+$wrapperPid = $PID
 
-# Start Claude as a child process (output streams to console)
-$claudeProc = Start-Process -FilePath 'cmd' -ArgumentList '/c', '${claudeCommand}' -PassThru -NoNewWindow
+Write-Host "Worker started. Monitoring session: $sessionPath"
 
-# Poll loop: watch for status changes or Claude exit
-$lastStatus = $null
-while ($true) {
-    Start-Sleep -Seconds 2
+# Start background job to monitor session status
+$watcherJob = Start-Job -ScriptBlock {
+    param($sessionPath, $wrapperPid)
 
-    # Check session status
-    try {
-        $session = Get-Content $sessionPath -Raw -ErrorAction Stop | ConvertFrom-Json
-        $status = $session.status
+    while ($true) {
+        Start-Sleep -Seconds 2
 
-        if ($status -ne $lastStatus) {
-            $lastStatus = $status
+        try {
+            $session = Get-Content $sessionPath -Raw -ErrorAction Stop | ConvertFrom-Json
+            $status = $session.status
 
-            # Auto-close on complete or cancelled
             if ($status -eq 'complete' -or $status -eq 'cancelled') {
-                if (-not $claudeProc.HasExited) {
-                    # Gracefully terminate Claude's process tree
-                    Stop-Process -Id $claudeProc.Id -Force -ErrorAction SilentlyContinue
-                    Start-Sleep -Milliseconds 500
-                }
+                # Kill entire process tree including wrapper
+                # Using Start-Process to run taskkill ensures it completes
+                Start-Process -FilePath 'taskkill' -ArgumentList '/T', '/F', '/PID', $wrapperPid -NoNewWindow -Wait
                 exit 0
             }
+        } catch {
+            # Ignore read errors, keep polling
         }
-    } catch {
-        # Ignore read errors
     }
+} -ArgumentList $sessionPath, $wrapperPid
 
-    # Check if Claude has exited
-    if ($claudeProc.HasExited) {
-        break
-    }
-}
+# Run Claude directly (blocking, output visible, interactive)
+& cmd /c '${claudeCommand}'
 
-# Claude exited naturally - check final status
+# Claude exited - clean up watcher job
+Remove-Job -Job $watcherJob -Force -ErrorAction SilentlyContinue
+
+# Check final status
+$session = $null
 try {
     $session = Get-Content $sessionPath -Raw | ConvertFrom-Json
     if ($session.status -eq 'complete' -or $session.status -eq 'cancelled') {
-        exit 0
+        [Environment]::Exit(0)
     }
 } catch {}
 
