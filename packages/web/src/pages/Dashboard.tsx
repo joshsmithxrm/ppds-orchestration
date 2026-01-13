@@ -1,36 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import SpawnDialog from '../components/SpawnDialog';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { useSoundsContext, useConfigContext } from '../App';
-
-// Note: These are duplicated from core to avoid importing Node.js dependencies into browser
-const statusColors: Record<string, string> = {
-  registered: 'bg-gray-500',
-  planning: 'bg-blue-500',
-  planning_complete: 'bg-purple-500',
-  working: 'bg-green-500',
-  shipping: 'bg-cyan-500',
-  reviews_in_progress: 'bg-cyan-500',
-  pr_ready: 'bg-emerald-400',
-  stuck: 'bg-red-500',
-  paused: 'bg-yellow-500',
-  complete: 'bg-gray-600',
-  cancelled: 'bg-gray-600',
-};
-
-const statusIcons: Record<string, string> = {
-  registered: '[ ]',
-  planning: '[~]',
-  planning_complete: '[P]',
-  working: '[*]',
-  shipping: '[>]',
-  reviews_in_progress: '[R]',
-  pr_ready: '[+]',
-  stuck: '[!]',
-  paused: '[||]',
-  complete: '[\u2713]',
-  cancelled: '[x]',
-};
+import { statusColors, statusIcons } from '../constants/status';
 
 interface Session {
   id: string;
@@ -67,9 +40,16 @@ function Dashboard() {
   const [activeFilters, setActiveFilters] = useState<Set<FilterCategory>>(
     new Set(['active', 'stuck'])
   );
+  const [confirmDismiss, setConfirmDismiss] = useState<{ repoId: string; sessionId: string } | null>(null);
+  const [confirmClearCompleted, setConfirmClearCompleted] = useState(false);
+  const [clearingCompleted, setClearingCompleted] = useState(false);
+  const [wsConnected, setWsConnected] = useState(true);
+  const [, setTick] = useState(0); // Force re-render for elapsed time updates
   const sounds = useSoundsContext();
   const config = useConfigContext();
   const prevSessionsRef = useRef<Map<string, string>>(new Map());
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectAttemptRef = useRef(0);
 
   // Map session status to filter category
   const getSessionCategory = (status: string): FilterCategory | null => {
@@ -145,62 +125,99 @@ function Dashboard() {
 
     fetchData();
 
-    // Set up WebSocket for real-time updates
-    const ws = new WebSocket(`ws://${window.location.host}/ws`);
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'session:add' && data.session) {
-        setSessions((prev) => {
-          // Check if session already exists
-          const exists = prev.some(
-            (s) => s.id === data.sessionId && s.repoId === data.repoId
-          );
-          if (exists) return prev;
-          return [...prev, { ...data.session, repoId: data.repoId }];
-        });
-        // Play spawn sound for new session (respects muteRalph)
-        if (data.session.status === 'working' || data.session.status === 'registered') {
-          if (shouldPlaySound(data.session)) {
-            sounds?.playOnSpawn();
-          }
-        }
-      } else if (data.type === 'session:update' && data.session) {
-        const key = `${data.repoId}:${data.sessionId}`;
-        const prevStatus = prevSessionsRef.current.get(key);
-        const newStatus = data.session.status;
+    // Set up WebSocket for real-time updates with reconnection
+    const connectWebSocket = () => {
+      const ws = new WebSocket(`ws://${window.location.host}/ws`);
+      wsRef.current = ws;
 
-        // Play sounds on status transitions (respects muteRalph)
-        if (prevStatus !== newStatus) {
-          if (shouldPlaySound(data.session)) {
-            if (newStatus === 'stuck') {
-              sounds?.playOnStuck();
-            } else if (newStatus === 'complete') {
-              sounds?.playOnComplete();
+      ws.onopen = () => {
+        setWsConnected(true);
+        reconnectAttemptRef.current = 0;
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'session:add' && data.session) {
+          setSessions((prev) => {
+            // Check if session already exists
+            const exists = prev.some(
+              (s) => s.id === data.sessionId && s.repoId === data.repoId
+            );
+            if (exists) return prev;
+            return [...prev, { ...data.session, repoId: data.repoId }];
+          });
+          // Play spawn sound for new session (respects muteRalph)
+          if (data.session.status === 'working' || data.session.status === 'registered') {
+            if (shouldPlaySound(data.session)) {
+              sounds?.playOnSpawn();
             }
           }
-          prevSessionsRef.current.set(key, newStatus);
-        }
+        } else if (data.type === 'session:update' && data.session) {
+          const key = `${data.repoId}:${data.sessionId}`;
+          const prevStatus = prevSessionsRef.current.get(key);
+          const newStatus = data.session.status;
 
-        setSessions((prev) =>
-          prev.map((s) =>
-            s.id === data.sessionId && s.repoId === data.repoId
-              ? { ...data.session, repoId: data.repoId }
-              : s
-          )
-        );
-      } else if (data.type === 'session:remove') {
-        const key = `${data.repoId}:${data.sessionId}`;
-        prevSessionsRef.current.delete(key);
-        setSessions((prev) =>
-          prev.filter(
-            (s) => !(s.id === data.sessionId && s.repoId === data.repoId)
-          )
-        );
-      }
+          // Play sounds on status transitions (respects muteRalph)
+          if (prevStatus !== newStatus) {
+            if (shouldPlaySound(data.session)) {
+              if (newStatus === 'stuck') {
+                sounds?.playOnStuck();
+              } else if (newStatus === 'complete') {
+                sounds?.playOnComplete();
+              }
+            }
+            prevSessionsRef.current.set(key, newStatus);
+          }
+
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === data.sessionId && s.repoId === data.repoId
+                ? { ...data.session, repoId: data.repoId }
+                : s
+            )
+          );
+        } else if (data.type === 'session:remove') {
+          const key = `${data.repoId}:${data.sessionId}`;
+          prevSessionsRef.current.delete(key);
+          setSessions((prev) =>
+            prev.filter(
+              (s) => !(s.id === data.sessionId && s.repoId === data.repoId)
+            )
+          );
+        }
+      };
+
+      ws.onerror = () => {
+        setWsConnected(false);
+      };
+
+      ws.onclose = () => {
+        setWsConnected(false);
+        wsRef.current = null;
+        // Reconnect with exponential backoff (max 30 seconds)
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptRef.current), 30000);
+        reconnectAttemptRef.current++;
+        setTimeout(connectWebSocket, delay);
+      };
     };
 
-    return () => ws.close();
-  }, [sounds]);
+    connectWebSocket();
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.onclose = null; // Prevent reconnection on unmount
+        wsRef.current.close();
+      }
+    };
+  }, [sounds, config]);
+
+  // Update elapsed time display every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTick((t) => t + 1);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const getElapsedTime = (startedAt: string): string => {
     const start = new Date(startedAt).getTime();
@@ -232,9 +249,15 @@ function Dashboard() {
     // Session will be added via WebSocket event
   };
 
-  const handleDismissSession = async (repoId: string, sessionId: string, e: React.MouseEvent) => {
+  const handleDismissClick = (repoId: string, sessionId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    setConfirmDismiss({ repoId, sessionId });
+  };
+
+  const handleConfirmDismiss = async () => {
+    if (!confirmDismiss) return;
+    const { repoId, sessionId } = confirmDismiss;
     try {
       const res = await fetch(`/api/sessions/${repoId}/${sessionId}`, {
         method: 'DELETE',
@@ -246,10 +269,17 @@ function Dashboard() {
       }
     } catch (err) {
       console.error('Failed to dismiss session:', err);
+    } finally {
+      setConfirmDismiss(null);
     }
   };
 
-  const handleClearCompleted = async () => {
+  const handleClearCompletedClick = () => {
+    setConfirmClearCompleted(true);
+  };
+
+  const handleConfirmClearCompleted = async () => {
+    setClearingCompleted(true);
     const completedSessions = sessions.filter((s) => s.status === 'complete');
     for (const session of completedSessions) {
       try {
@@ -263,6 +293,8 @@ function Dashboard() {
         console.error('Failed to clear session:', err);
       }
     }
+    setClearingCompleted(false);
+    setConfirmClearCompleted(false);
   };
 
   if (loading) {
@@ -294,14 +326,31 @@ function Dashboard() {
   // Filter sessions based on active filters
   const filteredSessions = sessions.filter((s) => {
     const category = getSessionCategory(s.status);
-    return category && activeFilters.has(category);
+    return category !== null && activeFilters.has(category);
   });
 
   return (
     <div className="space-y-6">
+      {/* Connection Warning */}
+      {!wsConnected && (
+        <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg px-4 py-2 flex items-center gap-2">
+          <svg className="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span className="text-yellow-300 text-sm">
+            Live updates disconnected. Reconnecting...
+          </span>
+        </div>
+      )}
+
       {/* Header with Spawn Button */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-white">Dashboard</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-semibold text-white">Dashboard</h2>
+          {wsConnected && (
+            <span className="w-2 h-2 bg-green-500 rounded-full" title="Live updates connected" />
+          )}
+        </div>
         <button
           onClick={() => setShowSpawnDialog(true)}
           className="px-4 py-2 bg-ppds-accent text-ppds-bg font-semibold rounded hover:bg-ppds-accent/80 transition-colors flex items-center gap-2"
@@ -366,10 +415,11 @@ function Dashboard() {
           <h2 className="text-lg font-semibold text-white">{getFilterLabel()}</h2>
           {completedCount > 0 && (
             <button
-              onClick={handleClearCompleted}
-              className="text-xs text-ppds-muted hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-700"
+              onClick={handleClearCompletedClick}
+              disabled={clearingCompleted}
+              className="text-xs text-ppds-muted hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Clear Completed ({completedCount})
+              {clearingCompleted ? 'Clearing...' : `Clear Completed (${completedCount})`}
             </button>
           )}
         </div>
@@ -402,16 +452,16 @@ function Dashboard() {
                       <div className="font-medium text-white">
                         {session.repoId} #{session.issueNumber}
                       </div>
-                      <div className="text-sm text-gray-400">
+                      <div className="text-sm text-ppds-muted">
                         {session.issueTitle}
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-right">
-                      <div className="text-sm text-gray-400">
+                      <div className="text-sm text-ppds-muted">
                         {session.mode === 'ralph' && (
-                          <span className="text-purple-400 mr-2">[Ralph]</span>
+                          <span className="text-ppds-ralph mr-2">[Ralph]</span>
                         )}
                         {getElapsedTime(session.startedAt)}
                       </div>
@@ -421,11 +471,13 @@ function Dashboard() {
                     </div>
                     {['complete', 'cancelled'].includes(session.status) && (
                       <button
-                        onClick={(e) => handleDismissSession(session.repoId, session.id, e)}
-                        className="text-gray-500 hover:text-red-400 transition-colors p-1"
-                        title="Dismiss"
+                        onClick={(e) => handleDismissClick(session.repoId, session.id, e)}
+                        className="text-gray-400 hover:text-red-400 hover:bg-red-900/30 transition-colors p-2 rounded"
+                        title="Dismiss session"
                       >
-                        ✕
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
                       </button>
                     )}
                   </div>
@@ -446,6 +498,28 @@ function Dashboard() {
         isOpen={showSpawnDialog}
         onClose={() => setShowSpawnDialog(false)}
         onSpawn={handleSpawn}
+      />
+
+      {/* Confirm Dismiss Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDismiss !== null}
+        title="Dismiss Session"
+        message="Are you sure you want to dismiss this session? This will remove it from the list."
+        confirmLabel="Dismiss"
+        variant="danger"
+        onConfirm={handleConfirmDismiss}
+        onCancel={() => setConfirmDismiss(null)}
+      />
+
+      {/* Confirm Clear Completed Dialog */}
+      <ConfirmDialog
+        isOpen={confirmClearCompleted}
+        title="Clear Completed Sessions"
+        message={`Are you sure you want to clear all ${completedCount} completed session(s)? This cannot be undone.`}
+        confirmLabel="Clear All"
+        variant="danger"
+        onConfirm={handleConfirmClearCompleted}
+        onCancel={() => setConfirmClearCompleted(false)}
       />
     </div>
   );

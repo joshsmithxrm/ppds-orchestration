@@ -175,7 +175,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
                 onClick={() => setMode('ralph')}
                 className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
                   mode === 'ralph'
-                    ? 'bg-purple-600 text-white'
+                    ? 'bg-ppds-ralph text-white'
                     : 'bg-ppds-bg text-ppds-muted hover:bg-gray-700'
                 }`}
               >
@@ -200,7 +200,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
                 placeholder="10"
                 min="1"
                 max="100"
-                className="w-full bg-ppds-bg border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                className="w-full bg-ppds-bg border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-ppds-ralph"
               />
               <p className="text-xs text-gray-500 mt-1">
                 Number of times to re-spawn the worker
@@ -220,7 +220,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-ppds-muted hover:text-white transition-colors"
+              className="px-4 py-2 text-ppds-muted hover:text-white hover:bg-gray-700 rounded transition-colors"
             >
               Cancel
             </button>

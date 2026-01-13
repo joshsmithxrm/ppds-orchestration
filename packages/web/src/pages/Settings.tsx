@@ -53,6 +53,14 @@ function Settings() {
     fetchConfig();
   }, []);
 
+  // Auto-dismiss success message after 5 seconds
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => setSuccess(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
+
   const fetchConfig = async () => {
     try {
       const res = await fetch('/api/config');
@@ -130,7 +138,7 @@ function Settings() {
         {!editMode ? (
           <button
             onClick={() => setEditMode(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 transition-colors"
+            className="px-4 py-2 bg-ppds-accent text-ppds-bg font-medium rounded hover:bg-ppds-accent/80 transition-colors"
           >
             Edit Config
           </button>
@@ -138,14 +146,14 @@ function Settings() {
           <div className="flex gap-2">
             <button
               onClick={handleCancel}
-              className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+              className="px-4 py-2 text-ppds-muted hover:text-white hover:bg-gray-700 rounded transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={handleSave}
               disabled={saving}
-              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500 disabled:opacity-50 transition-colors"
+              className="px-4 py-2 bg-ppds-accent text-ppds-bg font-medium rounded hover:bg-ppds-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {saving ? 'Saving...' : 'Save'}
             </button>
@@ -216,8 +224,8 @@ function Settings() {
                           <span
                             className={
                               repo.defaultMode === 'ralph'
-                                ? 'text-purple-400'
-                                : 'text-blue-400'
+                                ? 'text-ppds-ralph'
+                                : 'text-ppds-accent'
                             }
                           >
                             {repo.defaultMode}

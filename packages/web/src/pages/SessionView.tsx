@@ -50,6 +50,10 @@ function SessionView() {
     };
 
     fetchSession();
+
+    // Poll for updates every 5 seconds for active sessions
+    const interval = setInterval(fetchSession, 5000);
+    return () => clearInterval(interval);
   }, [repoId, sessionId]);
 
   const handleForward = async () => {
@@ -88,7 +92,7 @@ function SessionView() {
   };
 
   if (loading) {
-    return <div className="text-gray-400">Loading...</div>;
+    return <div className="text-ppds-muted">Loading...</div>;
   }
 
   if (!session) {
@@ -106,7 +110,7 @@ function SessionView() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4">
-        <Link to="/" className="text-gray-400 hover:text-white">
+        <Link to="/" className="text-ppds-muted hover:text-white">
           &larr; Back
         </Link>
         <h1 className="text-2xl font-bold text-white">
@@ -124,7 +128,7 @@ function SessionView() {
           {session.status}
         </span>
         {session.mode === 'ralph' && (
-          <span className="px-2 py-1 rounded text-sm bg-purple-500">Ralph</span>
+          <span className="px-2 py-1 rounded text-sm bg-ppds-ralph">Ralph</span>
         )}
       </div>
 
@@ -133,24 +137,24 @@ function SessionView() {
         <div className="bg-gray-800 rounded-lg p-4 space-y-3">
           <h2 className="text-lg font-semibold text-white">Details</h2>
           <div>
-            <div className="text-sm text-gray-400">Issue Title</div>
+            <div className="text-sm text-ppds-muted">Issue Title</div>
             <div className="text-white">{session.issueTitle}</div>
           </div>
           <div>
-            <div className="text-sm text-gray-400">Branch</div>
+            <div className="text-sm text-ppds-muted">Branch</div>
             <div className="font-mono text-sm text-cyan-400">
               {session.branch}
             </div>
           </div>
           <div>
-            <div className="text-sm text-gray-400">Worktree</div>
+            <div className="text-sm text-ppds-muted">Worktree</div>
             <div className="font-mono text-xs text-gray-300">
               {session.worktreePath}
             </div>
           </div>
           {session.pullRequestUrl && (
             <div>
-              <div className="text-sm text-gray-400">Pull Request</div>
+              <div className="text-sm text-ppds-muted">Pull Request</div>
               <a
                 href={session.pullRequestUrl}
                 target="_blank"
@@ -174,7 +178,7 @@ function SessionView() {
                 <span className="text-red-400">
                   -{session.worktreeStatus.deletions}
                 </span>
-                <span className="text-gray-400">
+                <span className="text-ppds-muted">
                   {session.worktreeStatus.filesChanged} files
                 </span>
               </div>
@@ -184,7 +188,7 @@ function SessionView() {
                 </div>
               )}
               {session.worktreeStatus.changedFiles.length > 0 && (
-                <div className="text-xs font-mono text-gray-400 space-y-1">
+                <div className="text-xs font-mono text-ppds-muted space-y-1">
                   {session.worktreeStatus.changedFiles.slice(0, 5).map((f) => (
                     <div key={f}>{f}</div>
                   ))}
@@ -198,7 +202,7 @@ function SessionView() {
               )}
             </>
           ) : (
-            <div className="text-gray-400">No changes yet</div>
+            <div className="text-ppds-muted">No changes yet</div>
           )}
         </div>
       </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { statusTextColors, statusLabels } from '../constants/status';
 
 interface RalphIteration {
   iteration: number;
@@ -27,22 +28,6 @@ interface RalphStatusProps {
   repoId: string;
   sessionId: string;
 }
-
-const stateColors: Record<string, string> = {
-  running: 'text-green-400',
-  waiting: 'text-yellow-400',
-  done: 'text-blue-400',
-  stuck: 'text-red-400',
-  paused: 'text-gray-400',
-};
-
-const stateLabels: Record<string, string> = {
-  running: 'Running',
-  waiting: 'Waiting',
-  done: 'Complete',
-  stuck: 'Stuck',
-  paused: 'Paused',
-};
 
 function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
   const [state, setState] = useState<RalphLoopState | null>(null);
@@ -130,7 +115,7 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
         <p className="text-gray-400 mb-3">No active Ralph loop for this session.</p>
         <button
           onClick={handleStart}
-          className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-500 transition-colors text-sm"
+          className="px-4 py-2 bg-ppds-ralph text-white rounded hover:bg-ppds-ralph/80 transition-colors text-sm"
         >
           Start Ralph Loop
         </button>
@@ -149,10 +134,10 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
         <h3 className="text-lg font-semibold text-white">Ralph Loop</h3>
         <span
           className={`font-medium px-2 py-0.5 rounded text-sm ${
-            stateColors[state.state] || 'text-gray-400'
+            statusTextColors[state.state] || 'text-ppds-muted'
           }`}
         >
-          {stateLabels[state.state] || state.state}
+          {statusLabels[state.state] || state.state}
         </span>
       </div>
 
@@ -166,7 +151,7 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
         </div>
         <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
           <div
-            className="bg-purple-500 h-2 rounded-full transition-all duration-300"
+            className="bg-ppds-ralph h-2 rounded-full transition-all duration-300"
             style={{ width: `${progressPercent}%` }}
           />
         </div>
@@ -223,7 +208,7 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
         <button
           onClick={handleContinue}
           disabled={continuing}
-          className="w-full px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-500 disabled:opacity-50 transition-colors"
+          className="w-full px-4 py-2 bg-ppds-ralph text-white rounded hover:bg-ppds-ralph/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {continuing ? 'Continuing...' : 'Continue to Next Iteration'}
         </button>
