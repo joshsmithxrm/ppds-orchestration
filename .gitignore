@@ -13,6 +13,13 @@ dist/
 
 # Claude Code
 .claude/settings.local.json
+.claude/session-prompt.md
+.claude/spawn-info.json
+.claude/worker-plan.md
+.claude/worker-wrapper.ps1
+.claude/worker-wrapper.cmd
+.claude/session-watcher.ps1
+.claude/exit-signal
 .playwright-mcp/
 nul
 
