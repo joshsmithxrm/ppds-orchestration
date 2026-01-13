@@ -5,6 +5,7 @@ import {
   SessionState,
   SessionStatus,
   SessionWatcher,
+  WorktreeStateWatcher,
   GitUtils,
   getRepoEffectiveConfig,
   ExecutionMode,
@@ -28,6 +29,7 @@ export type SessionEventCallback = (
 export class MultiRepoService {
   private services: Map<string, SessionService> = new Map();
   private watchers: Map<string, SessionWatcher> = new Map();
+  private worktreeWatchers: Map<string, WorktreeStateWatcher> = new Map();
   private config: CentralConfig;
   private eventCallbacks: SessionEventCallback[] = [];
   private hookExecutor: HookExecutor = new HookExecutor();
@@ -216,6 +218,12 @@ export class MultiRepoService {
 
     const session = await service.spawn(issueNumber, { mode, additionalPromptSections });
 
+    // Add to worktree watcher for real-time status updates
+    const worktreeWatcher = this.worktreeWatchers.get(repoId);
+    if (worktreeWatcher) {
+      worktreeWatcher.addSession(session.id, session.worktreePath);
+    }
+
     // Execute onSpawn command hook after successful spawn
     await this.executeHook('onSpawn', repoId, session);
 
@@ -283,6 +291,18 @@ export class MultiRepoService {
     keepWorktree?: boolean
   ): Promise<void> {
     const service = this.getService(repoId);
+
+    // Get session before cancelling to get worktree path
+    const session = await service.get(sessionId);
+
+    // Remove from worktree watcher
+    if (session) {
+      const worktreeWatcher = this.worktreeWatchers.get(repoId);
+      if (worktreeWatcher) {
+        worktreeWatcher.removeSession(sessionId, session.worktreePath);
+      }
+    }
+
     return service.cancel(sessionId, { keepWorktree });
   }
 
@@ -338,9 +358,10 @@ export class MultiRepoService {
   /**
    * Start watching all repos for changes.
    */
-  startWatching(): void {
+  async startWatching(): Promise<void> {
     for (const [repoId, service] of this.services) {
       try {
+        // Watch session files in .sessions directory
         const sessionsDir = service.getSessionsDir();
         const watcher = new SessionWatcher(sessionsDir);
 
@@ -358,6 +379,47 @@ export class MultiRepoService {
         watcher.start();
         this.watchers.set(repoId, watcher);
         console.log(`Session watcher started for repo: ${repoId}`);
+
+        // Also watch worktree session-state.json files for worker status updates
+        const worktreeWatcher = new WorktreeStateWatcher();
+
+        worktreeWatcher.on(async (event, sessionId, worktreeState) => {
+          try {
+            // Sync worktree state to main session file
+            const session = await service.syncWorktreeState(sessionId, worktreeState);
+            if (session) {
+              // Emit update event so WebSocket broadcasts it
+              for (const callback of this.eventCallbacks) {
+                try {
+                  callback('update', repoId, session, sessionId);
+                } catch (error) {
+                  console.error(`Worktree state callback error for ${repoId}:`, error);
+                }
+              }
+
+              // Execute hooks based on status change
+              if (worktreeState.status === 'stuck') {
+                await this.executeHook('onStuck', repoId, session);
+              } else if (worktreeState.status === 'complete') {
+                await this.executeHook('onComplete', repoId, session);
+              }
+            }
+          } catch (error) {
+            console.error(`Error syncing worktree state for ${repoId}/${sessionId}:`, error);
+          }
+        });
+
+        // Add existing sessions to worktree watcher
+        const sessions = await service.list();
+        for (const session of sessions) {
+          if (!['complete', 'cancelled'].includes(session.status)) {
+            worktreeWatcher.addSession(session.id, session.worktreePath);
+          }
+        }
+
+        worktreeWatcher.start();
+        this.worktreeWatchers.set(repoId, worktreeWatcher);
+        console.log(`Worktree watcher started for repo: ${repoId} (${sessions.length} sessions)`);
       } catch (error) {
         console.error(`Failed to start watcher for ${repoId}:`, error);
       }
@@ -368,11 +430,16 @@ export class MultiRepoService {
   /**
    * Stop watching.
    */
-  stopWatching(): void {
+  async stopWatching(): Promise<void> {
     for (const watcher of this.watchers.values()) {
-      watcher.stop();
+      await watcher.stop();
     }
     this.watchers.clear();
+
+    for (const watcher of this.worktreeWatchers.values()) {
+      await watcher.stop();
+    }
+    this.worktreeWatchers.clear();
   }
 
   /**

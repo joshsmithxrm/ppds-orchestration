@@ -286,6 +286,39 @@ export class SessionService {
   }
 
   /**
+   * Syncs worktree state to the main session file.
+   * Called when the worktree watcher detects a change to session-state.json.
+   */
+  async syncWorktreeState(
+    sessionId: string,
+    worktreeState: { status?: SessionStatus; forwardedMessage?: string | null; stuckReason?: string }
+  ): Promise<SessionState | null> {
+    const session = await this.store.load(sessionId);
+
+    if (!session) {
+      console.warn(`syncWorktreeState: Session '${sessionId}' not found`);
+      return null;
+    }
+
+    // Only sync if status actually changed
+    if (worktreeState.status && worktreeState.status !== session.status) {
+      const now = new Date().toISOString();
+      const updatedSession: SessionState = {
+        ...session,
+        status: worktreeState.status,
+        stuckReason: worktreeState.status === 'stuck' ? worktreeState.stuckReason : undefined,
+        forwardedMessage: worktreeState.forwardedMessage ?? session.forwardedMessage,
+        lastHeartbeat: now,
+      };
+
+      await this.store.save(updatedSession);
+      return updatedSession;
+    }
+
+    return session;
+  }
+
+  /**
    * Pauses a session.
    */
   async pause(sessionId: string): Promise<SessionState> {

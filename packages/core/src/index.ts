@@ -57,6 +57,10 @@ export { WindowsTerminalSpawner, createSpawner } from './spawner/windows-termina
 export { SessionWatcher } from './watcher/session-watcher.js';
 export type { SessionWatcherEvent, SessionWatcherCallback } from './watcher/session-watcher.js';
 
+// Worktree state watcher
+export { WorktreeStateWatcher } from './watcher/worktree-state-watcher.js';
+export type { WorktreeStateEvent, WorktreeStateCallback } from './watcher/worktree-state-watcher.js';
+
 // Hook executor
 export { HookExecutor } from './hooks/hook-executor.js';
 export type { HookContext, HookResult } from './hooks/hook-executor.js';
