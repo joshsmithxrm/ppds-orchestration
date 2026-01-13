@@ -329,8 +329,8 @@ export class SessionService {
       throw new Error(`Session '${sessionId}' not found`);
     }
 
-    // Update status to cancelled
-    await this.update(sessionId, 'cancelled');
+    // Skip intermediate 'cancelled' status update - delete directly to avoid
+    // race condition where watcher broadcasts 'cancelled' before deletion
 
     // Remove worktree unless keepWorktree is true
     if (!options?.keepWorktree && fs.existsSync(session.worktreePath)) {
@@ -567,26 +567,33 @@ ${body}
 
 ## Status Reporting
 
-**Report status at each phase transition** so the orchestrator can track your progress:
+**Report status at each phase transition** by updating \`session-state.json\` in the worktree root.
 
-| Phase | Command |
-|-------|---------|
-| Starting | \`${cli} update --id ${issueNumber} --status planning\` |
-| Plan complete | \`${cli} update --id ${issueNumber} --status planning_complete\` |
-| Implementing | \`${cli} update --id ${issueNumber} --status working\` |
-| Stuck | \`${cli} update --id ${issueNumber} --status stuck --reason "description"\` |
+| Phase | Status Value |
+|-------|--------------|
+| Starting | \`planning\` |
+| Plan complete | \`planning_complete\` |
+| Implementing | \`working\` |
+| Stuck | \`stuck\` (also set \`stuckReason\`) |
+| Complete | \`complete\` |
+
+**How to update status:**
+1. Read \`session-state.json\`
+2. Update the \`status\` field to the new value
+3. If stuck, also set \`stuckReason\` to explain what you need
+4. Write the updated JSON back to \`session-state.json\`
 
 **Note:** \`/ship\` automatically updates status to \`shipping\` → \`reviews_in_progress\` → \`complete\`.
 
 ## Workflow
 
 ### Phase 1: Planning
-1. **First:** \`${cli} update --id ${issueNumber} --status planning\`
+1. **First:** Update \`session-state.json\` with \`"status": "planning"\`
 2. Read and understand the issue requirements
 3. Explore the codebase to understand existing patterns
 4. Create a detailed implementation plan
 5. Write your plan to \`.claude/worker-plan.md\`
-6. **Then:** \`${cli} update --id ${issueNumber} --status planning_complete\`
+6. **Then:** Update \`session-state.json\` with \`"status": "planning_complete"\`
 
 ### Message Check Protocol
 
@@ -595,20 +602,17 @@ Check for forwarded messages at these points:
 2. **When stuck** - check every 5 minutes while waiting for guidance
 3. **Before major decisions** - architectural choices, security implementations
 
-**How to check:**
-\`\`\`bash
-cat session-state.json | jq -r '.forwardedMessage // empty'
-\`\`\`
+**How to check:** Read \`session-state.json\` and check the \`forwardedMessage\` field.
 
 **If message exists:**
 1. Read and incorporate the guidance into your approach
-2. Acknowledge receipt: \`${cli} ack ${issueNumber}\`
+2. Clear the message by setting \`forwardedMessage\` to \`null\` in \`session-state.json\`
 3. Continue with your work (the guidance may unstick you)
 
 **Important:** When your status is \`stuck\`, check for messages periodically - the orchestrator may have sent guidance that unblocks you.
 
 ### Phase 3: Implementation
-1. **First:** \`${cli} update --id ${issueNumber} --status working\`
+1. **First:** Update \`session-state.json\` with \`"status": "working"\`
 2. Follow your plan in \`.claude/worker-plan.md\`
 3. Build and test your changes
 4. Create PR via \`/ship\` (handles remaining status updates automatically)
@@ -620,7 +624,7 @@ If you encounter these, set status to \`stuck\` with a clear reason:
 - Breaking changes
 - Data migration
 
-Example: \`${cli} update --id ${issueNumber} --status stuck --reason "Need auth decision: should we use JWT or session tokens?"\`
+**Example:** Update \`session-state.json\` with \`"status": "stuck"\` and \`"stuckReason": "Need auth decision: should we use JWT or session tokens?"\`
 
 ## Reference
 - Follow CLAUDE.md for coding standards
@@ -643,7 +647,7 @@ This session is running in **Ralph loop mode**. This means:
 2. Find the next incomplete task
 3. Complete that single task
 4. Commit your changes
-5. Update status: \`${cli} update --id ${issueNumber} --status complete\`
+5. Update \`session-state.json\` in your worktree root with \`{ "status": "complete" }\`
 6. Exit (the orchestrator will re-spawn you if more tasks remain)
 
 **Important:** Do NOT try to complete all tasks in one go. Complete exactly ONE task per iteration.
