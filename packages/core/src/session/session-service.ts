@@ -6,7 +6,6 @@ import {
   SessionState,
   SessionStatus,
   SessionContext,
-  SessionDynamicState,
   SessionListResult,
   WorktreeStatus,
   ExecutionMode,
@@ -80,9 +79,14 @@ export class SessionService {
     const sessionId = issueNumber.toString();
     const mode = options?.mode ?? 'single';
 
-    // Check if session already exists
+    // Check if session already exists and is still active
     if (this.store.exists(sessionId)) {
-      throw new Error(`Session for issue #${issueNumber} already exists`);
+      const existing = await this.store.load(sessionId);
+      if (existing && existing.status !== 'complete' && existing.status !== 'cancelled') {
+        throw new Error(`Session for issue #${issueNumber} already exists (status: ${existing.status})`);
+      }
+      // Session is complete/cancelled - allow re-spawn by deleting old session
+      await this.store.delete(sessionId);
     }
 
     // Check spawner availability
@@ -118,6 +122,7 @@ export class SessionService {
 
     // Write session context (static identity file)
     const now = new Date().toISOString();
+    const sessionFilePath = this.store.getSessionFilePath(sessionId);
     const context: SessionContext = {
       sessionId,
       issueNumber,
@@ -133,15 +138,9 @@ export class SessionService {
         heartbeat: `orch heartbeat --id ${issueNumber}`,
       },
       spawnedAt: now,
+      sessionFilePath,
     };
     await this.store.writeSessionContext(worktreePath, context);
-
-    // Write initial session state (dynamic state file)
-    const dynamicState: SessionDynamicState = {
-      status: 'registered',
-      lastUpdated: now,
-    };
-    await this.store.writeSessionState(worktreePath, dynamicState);
 
     // Register session
     const session: SessionState = {
@@ -183,10 +182,6 @@ export class SessionService {
       lastHeartbeat: new Date().toISOString(),
     };
     await this.store.save(updatedSession);
-    await this.store.writeSessionState(worktreePath, {
-      status: 'working',
-      lastUpdated: new Date().toISOString(),
-    });
 
     return updatedSession;
   }
@@ -273,49 +268,7 @@ export class SessionService {
 
     await this.store.save(updatedSession);
 
-    // Also update worktree state file
-    if (fs.existsSync(session.worktreePath)) {
-      await this.store.writeSessionState(session.worktreePath, {
-        status,
-        forwardedMessage: session.forwardedMessage,
-        lastUpdated: now,
-      });
-    }
-
     return updatedSession;
-  }
-
-  /**
-   * Syncs worktree state to the main session file.
-   * Called when the worktree watcher detects a change to session-state.json.
-   */
-  async syncWorktreeState(
-    sessionId: string,
-    worktreeState: { status?: SessionStatus; forwardedMessage?: string | null; stuckReason?: string }
-  ): Promise<SessionState | null> {
-    const session = await this.store.load(sessionId);
-
-    if (!session) {
-      console.warn(`syncWorktreeState: Session '${sessionId}' not found`);
-      return null;
-    }
-
-    // Only sync if status actually changed
-    if (worktreeState.status && worktreeState.status !== session.status) {
-      const now = new Date().toISOString();
-      const updatedSession: SessionState = {
-        ...session,
-        status: worktreeState.status,
-        stuckReason: worktreeState.status === 'stuck' ? worktreeState.stuckReason : undefined,
-        forwardedMessage: worktreeState.forwardedMessage ?? session.forwardedMessage,
-        lastHeartbeat: now,
-      };
-
-      await this.store.save(updatedSession);
-      return updatedSession;
-    }
-
-    return session;
   }
 
   /**
@@ -410,15 +363,6 @@ export class SessionService {
 
     await this.store.save(updatedSession);
 
-    // Update worktree state file
-    if (fs.existsSync(session.worktreePath)) {
-      await this.store.writeSessionState(session.worktreePath, {
-        status: session.status,
-        forwardedMessage: message,
-        lastUpdated: now,
-      });
-    }
-
     return updatedSession;
   }
 
@@ -464,15 +408,6 @@ export class SessionService {
     };
 
     await this.store.save(updatedSession);
-
-    // Clear in worktree state file too
-    if (fs.existsSync(session.worktreePath)) {
-      await this.store.writeSessionState(session.worktreePath, {
-        status: session.status,
-        forwardedMessage: undefined,
-        lastUpdated: now,
-      });
-    }
 
     return updatedSession;
   }
@@ -600,7 +535,9 @@ ${body}
 
 ## Status Reporting
 
-**Report status at each phase transition** by updating \`session-state.json\` in the worktree root.
+**Report status at each phase transition** by updating the session file directly.
+
+**Session file location:** Read \`session-context.json\` in the worktree root to find the \`sessionFilePath\` field.
 
 | Phase | Status Value |
 |-------|--------------|
@@ -611,22 +548,23 @@ ${body}
 | Complete | \`complete\` |
 
 **How to update status:**
-1. Read \`session-state.json\`
+1. Read the session file (path from \`session-context.json\` → \`sessionFilePath\`)
 2. Update the \`status\` field to the new value
-3. If stuck, also set \`stuckReason\` to explain what you need
-4. Write the updated JSON back to \`session-state.json\`
+3. Update \`lastHeartbeat\` to current ISO timestamp
+4. If stuck, also set \`stuckReason\` to explain what you need
+5. Write the updated JSON back to the session file
 
 **Note:** \`/ship\` automatically updates status to \`shipping\` → \`reviews_in_progress\` → \`complete\`.
 
 ## Workflow
 
 ### Phase 1: Planning
-1. **First:** Update \`session-state.json\` with \`"status": "planning"\`
+1. **First:** Update session file with \`"status": "planning"\`
 2. Read and understand the issue requirements
 3. Explore the codebase to understand existing patterns
 4. Create a detailed implementation plan
 5. Write your plan to \`.claude/worker-plan.md\`
-6. **Then:** Update \`session-state.json\` with \`"status": "planning_complete"\`
+6. **Then:** Update session file with \`"status": "planning_complete"\`
 
 ### Message Check Protocol
 
@@ -635,17 +573,17 @@ Check for forwarded messages at these points:
 2. **When stuck** - check every 5 minutes while waiting for guidance
 3. **Before major decisions** - architectural choices, security implementations
 
-**How to check:** Read \`session-state.json\` and check the \`forwardedMessage\` field.
+**How to check:** Read the session file and check the \`forwardedMessage\` field.
 
 **If message exists:**
 1. Read and incorporate the guidance into your approach
-2. Clear the message by setting \`forwardedMessage\` to \`null\` in \`session-state.json\`
+2. Clear the message by setting \`forwardedMessage\` to \`undefined\` (or remove the field)
 3. Continue with your work (the guidance may unstick you)
 
 **Important:** When your status is \`stuck\`, check for messages periodically - the orchestrator may have sent guidance that unblocks you.
 
 ### Phase 3: Implementation
-1. **First:** Update \`session-state.json\` with \`"status": "working"\`
+1. **First:** Update session file with \`"status": "working"\`
 2. Follow your plan in \`.claude/worker-plan.md\`
 3. Build and test your changes
 4. Create PR via \`/ship\` (handles remaining status updates automatically)
@@ -657,7 +595,7 @@ If you encounter these, set status to \`stuck\` with a clear reason:
 - Breaking changes
 - Data migration
 
-**Example:** Update \`session-state.json\` with \`"status": "stuck"\` and \`"stuckReason": "Need auth decision: should we use JWT or session tokens?"\`
+**Example:** Update session file with \`"status": "stuck"\` and \`"stuckReason": "Need auth decision: should we use JWT or session tokens?"\`
 
 ## Reference
 - Follow CLAUDE.md for coding standards
@@ -680,8 +618,8 @@ This session is running in **Ralph loop mode**. This means:
 2. Find the next incomplete task
 3. Complete that single task
 4. Commit your changes
-5. Update \`session-state.json\` in your worktree root with \`{ "status": "complete" }\`
-6. Exit (the orchestrator will re-spawn you if more tasks remain)
+5. Update the session file (from \`session-context.json\` → \`sessionFilePath\`) with \`"status": "complete"\`
+6. The terminal will close automatically (the orchestrator will re-spawn you if more tasks remain)
 
 **Important:** Do NOT try to complete all tasks in one go. Complete exactly ONE task per iteration.
 `;
