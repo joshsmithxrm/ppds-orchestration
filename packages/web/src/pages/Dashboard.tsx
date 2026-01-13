@@ -113,7 +113,7 @@ function Dashboard() {
     const fetchData = async () => {
       try {
         const [sessionsRes, reposRes] = await Promise.all([
-          fetch('/api/sessions'),
+          fetch('/api/sessions?includeCompleted=true'),
           fetch('/api/repos'),
         ]);
 
@@ -231,6 +231,39 @@ function Dashboard() {
     // Session will be added via WebSocket event
   };
 
+  const handleDismissSession = async (repoId: string, sessionId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const res = await fetch(`/api/sessions/${repoId}/${sessionId}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setSessions((prev) =>
+          prev.filter((s) => !(s.id === sessionId && s.repoId === repoId))
+        );
+      }
+    } catch (err) {
+      console.error('Failed to dismiss session:', err);
+    }
+  };
+
+  const handleClearCompleted = async () => {
+    const completedSessions = sessions.filter((s) => s.status === 'complete');
+    for (const session of completedSessions) {
+      try {
+        await fetch(`/api/sessions/${session.repoId}/${session.id}`, {
+          method: 'DELETE',
+        });
+        setSessions((prev) =>
+          prev.filter((s) => !(s.id === session.id && s.repoId === session.repoId))
+        );
+      } catch (err) {
+        console.error('Failed to clear session:', err);
+      }
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -328,8 +361,16 @@ function Dashboard() {
 
       {/* Sessions List */}
       <div className="bg-ppds-card rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-700">
+        <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">{getFilterLabel()}</h2>
+          {completedCount > 0 && (
+            <button
+              onClick={handleClearCompleted}
+              className="text-xs text-ppds-muted hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-700"
+            >
+              Clear Completed ({completedCount})
+            </button>
+          )}
         </div>
         {sessions.length === 0 ? (
           <div className="p-8 text-center text-ppds-muted">
@@ -365,16 +406,27 @@ function Dashboard() {
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-sm text-gray-400">
-                      {session.mode === 'ralph' && (
-                        <span className="text-purple-400 mr-2">[Ralph]</span>
-                      )}
-                      {getElapsedTime(session.startedAt)}
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="text-sm text-gray-400">
+                        {session.mode === 'ralph' && (
+                          <span className="text-purple-400 mr-2">[Ralph]</span>
+                        )}
+                        {getElapsedTime(session.startedAt)}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {session.branch}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      {session.branch}
-                    </div>
+                    {['complete', 'cancelled'].includes(session.status) && (
+                      <button
+                        onClick={(e) => handleDismissSession(session.repoId, session.id, e)}
+                        className="text-gray-500 hover:text-red-400 transition-colors p-1"
+                        title="Dismiss"
+                      >
+                        ✕
+                      </button>
+                    )}
                   </div>
                 </div>
                 {session.stuckReason && (
