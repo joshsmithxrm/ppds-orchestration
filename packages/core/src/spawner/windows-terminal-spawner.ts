@@ -166,22 +166,29 @@ $ErrorActionPreference = 'SilentlyContinue'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 while ($true) {
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 1
 
     try {
         $session = Get-Content $sessionPath -Raw -ErrorAction Stop | ConvertFrom-Json
         $status = $session.status
 
         if ($status -eq 'complete' -or $status -eq 'cancelled') {
-            # Create signal file for wrapper to detect
-            "clean" | Out-File (Join-Path $scriptDir 'exit-signal') -Force
+            # Create signal file for wrapper to detect (do this FIRST)
+            "clean" | Out-File (Join-Path $scriptDir 'exit-signal') -Force -Encoding ASCII
 
             # Kill Claude and related processes
             # Find cmd.exe processes with claude in command line and kill their trees
             Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
                 $_.Name -eq 'cmd.exe' -and $_.CommandLine -like '*claude*--dangerously-skip-permissions*'
             } | ForEach-Object {
-                Start-Process -FilePath 'taskkill' -ArgumentList '/T', '/F', '/PID', $_.ProcessId -NoNewWindow -Wait
+                & taskkill /T /F /PID $_.ProcessId 2>$null
+            }
+
+            # Also kill any direct claude.exe processes
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+                $_.Name -eq 'claude.exe'
+            } | ForEach-Object {
+                & taskkill /T /F /PID $_.ProcessId 2>$null
             }
 
             exit 0
@@ -223,10 +230,17 @@ start "" /b powershell -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -F
 REM Run Claude directly (blocking, output visible, interactive)
 cmd /c ${batchClaudeCommand}
 
-REM Claude exited - check for clean exit signal
+REM Claude exited - check for clean exit signal from watcher
 if exist ".claude\\exit-signal" (
     del ".claude\\exit-signal" >nul 2>&1
     exit /b 0
+)
+
+REM No signal file - check session status directly (handles natural Claude exit)
+REM This covers the race condition where Claude exits before watcher detects completion
+for /f "usebackq tokens=*" %%s in (\`powershell -NoProfile -Command "(Get-Content '%SESSION_PATH%' -ErrorAction SilentlyContinue | ConvertFrom-Json).status"\`) do (
+    if "%%s"=="complete" exit /b 0
+    if "%%s"=="cancelled" exit /b 0
 )
 
 REM Not clean exit - show status and wait for user input
