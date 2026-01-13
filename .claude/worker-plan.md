@@ -13,8 +13,8 @@ Create a simple hello world script to test the orchestration system.
 3. **Test execution** - Run `npx tsx scripts/hello.ts` to verify output
 
 ## Acceptance Criteria Checklist
-- [ ] Script exists at `scripts/hello.ts`
-- [ ] Running `npx tsx scripts/hello.ts` prints "Hello from orchestration!"
+- [x] Script exists at `scripts/hello.ts`
+- [x] Running `npx tsx scripts/hello.ts` prints "Hello from orchestration!"
 
 ## Notes
 - Using `tsx` for TypeScript execution (already available via npx)
