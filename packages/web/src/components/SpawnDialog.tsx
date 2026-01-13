@@ -11,7 +11,42 @@ interface Repo {
 interface SpawnDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onSpawn: (repoId: string, issueNumber: number, mode: 'single' | 'ralph', iterations?: number) => Promise<void>;
+  onSpawn: (repoId: string, issueNumbers: number[], mode: 'single' | 'ralph', iterations?: number) => Promise<void>;
+}
+
+/**
+ * Parse a string of comma/space-separated issue numbers into an array.
+ * Returns null if any value is invalid.
+ */
+export function parseIssueNumbers(input: string): { numbers: number[] } | { error: string } {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { error: 'Please enter at least one issue number' };
+  }
+
+  // Split on commas, spaces, or both
+  const parts = trimmed.split(/[\s,]+/).filter(s => s.length > 0);
+  const numbers: number[] = [];
+  const invalid: string[] = [];
+
+  for (const part of parts) {
+    const num = parseInt(part, 10);
+    if (isNaN(num) || num <= 0) {
+      invalid.push(part);
+    } else {
+      numbers.push(num);
+    }
+  }
+
+  if (invalid.length > 0) {
+    return { error: `Invalid issue number(s): ${invalid.join(', ')}` };
+  }
+
+  if (numbers.length === 0) {
+    return { error: 'Please enter at least one issue number' };
+  }
+
+  return { numbers };
 }
 
 function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
@@ -47,14 +82,14 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!selectedRepo || !issueNumber) {
-      setError('Please select a repo and enter an issue number');
+    if (!selectedRepo) {
+      setError('Please select a repository');
       return;
     }
 
-    const issueNum = parseInt(issueNumber, 10);
-    if (isNaN(issueNum) || issueNum <= 0) {
-      setError('Please enter a valid issue number');
+    const result = parseIssueNumbers(issueNumber);
+    if ('error' in result) {
+      setError(result.error);
       return;
     }
 
@@ -63,7 +98,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
 
     try {
       const iterNum = mode === 'ralph' ? parseInt(iterations, 10) : undefined;
-      await onSpawn(selectedRepo, issueNum, mode, iterNum);
+      await onSpawn(selectedRepo, result.numbers, mode, iterNum);
       setIssueNumber('');
       onClose();
     } catch (err) {
@@ -105,17 +140,19 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
             </select>
           </div>
 
-          {/* Issue Number Input */}
+          {/* Issue Number(s) Input */}
           <div>
-            <label className="block text-sm text-ppds-muted mb-1">Issue Number</label>
+            <label className="block text-sm text-ppds-muted mb-1">Issue Number(s)</label>
             <input
-              type="number"
+              type="text"
               value={issueNumber}
               onChange={(e) => setIssueNumber(e.target.value)}
-              placeholder="123"
-              min="1"
+              placeholder="e.g., 5 or 1, 2, 3"
               className="w-full bg-ppds-bg border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-ppds-accent"
             />
+            <p className="text-xs text-gray-500 mt-1">
+              Enter one or more issue numbers, separated by commas or spaces
+            </p>
           </div>
 
           {/* Mode Toggle */}

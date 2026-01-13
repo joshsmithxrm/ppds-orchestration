@@ -53,22 +53,34 @@ sessionsRouter.get('/:repoId/:sessionId', async (req: Request, res: Response) =>
 /**
  * POST /api/sessions/:repoId
  * Spawn a new worker session.
- * Body: { issueNumber: number, mode?: 'single' | 'ralph', iterations?: number }
+ * Body: { issueNumber?: number, issueNumbers?: number[], mode?: 'single' | 'ralph', iterations?: number }
+ * - issueNumbers: Array of issue numbers for combined session (preferred)
+ * - issueNumber: Single issue number (backwards compatibility)
  */
 sessionsRouter.post('/:repoId', async (req: Request, res: Response) => {
   try {
     const service: MultiRepoService = req.app.locals.multiRepoService;
     const ralphManager: RalphLoopManager = req.app.locals.ralphManager;
     const { repoId } = req.params;
-    const { issueNumber, mode = 'single', iterations } = req.body;
+    const { issueNumber, issueNumbers, mode = 'single', iterations } = req.body;
 
-    if (!issueNumber || typeof issueNumber !== 'number') {
-      return res.status(400).json({ error: 'issueNumber is required' });
+    // Normalize: prefer issueNumbers array, fall back to single issueNumber
+    let issues: number[];
+    if (issueNumbers && Array.isArray(issueNumbers) && issueNumbers.length > 0) {
+      // Validate all elements are numbers
+      if (!issueNumbers.every((n: unknown) => typeof n === 'number' && n > 0)) {
+        return res.status(400).json({ error: 'issueNumbers must be an array of positive numbers' });
+      }
+      issues = issueNumbers;
+    } else if (typeof issueNumber === 'number' && issueNumber > 0) {
+      issues = [issueNumber];
+    } else {
+      return res.status(400).json({ error: 'issueNumber or issueNumbers is required' });
     }
 
     const session = await service.spawn(
       repoId,
-      issueNumber,
+      issues,
       mode as ExecutionMode
     );
 

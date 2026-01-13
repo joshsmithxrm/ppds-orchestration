@@ -214,14 +214,14 @@ function Dashboard() {
 
   const handleSpawn = async (
     repoId: string,
-    issueNumber: number,
+    issueNumbers: number[],
     mode: 'single' | 'ralph',
     iterations?: number
   ) => {
     const res = await fetch(`/api/sessions/${repoId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ issueNumber, mode, iterations }),
+      body: JSON.stringify({ issueNumbers, mode, iterations }),
     });
 
     if (!res.ok) {

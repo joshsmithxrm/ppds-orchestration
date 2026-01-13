@@ -191,10 +191,13 @@ export class MultiRepoService {
 
   /**
    * Spawn a new worker.
+   * @param repoId - Repository ID
+   * @param issueNumbers - Single issue number or array of issue numbers for combined session
+   * @param mode - Execution mode ('single' or 'ralph')
    */
   async spawn(
     repoId: string,
-    issueNumber: number,
+    issueNumbers: number | number[],
     mode: ExecutionMode = 'single'
   ): Promise<SessionState> {
     const service = this.getService(repoId);
@@ -215,7 +218,7 @@ export class MultiRepoService {
       additionalPromptSections.push(onTestHook.value);
     }
 
-    const session = await service.spawn(issueNumber, { mode, additionalPromptSections });
+    const session = await service.spawn(issueNumbers, { mode, additionalPromptSections });
 
     // Execute onSpawn command hook after successful spawn
     await this.executeHook('onSpawn', repoId, session);

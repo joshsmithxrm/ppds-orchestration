@@ -113,7 +113,7 @@ describe('Sessions API', () => {
   });
 
   describe('POST /api/sessions/:repoId', () => {
-    it('spawns a new session', async () => {
+    it('spawns a new session with single issueNumber (backwards compat)', async () => {
       const mockSession = {
         id: '123',
         issueNumber: 123,
@@ -128,7 +128,30 @@ describe('Sessions API', () => {
 
       expect(response.status).toBe(201);
       expect(response.body.session).toEqual(mockSession);
-      expect(mockMultiRepoService.spawn).toHaveBeenCalledWith('repo-1', 123, 'single');
+      // API normalizes single issueNumber to array
+      expect(mockMultiRepoService.spawn).toHaveBeenCalledWith('repo-1', [123], 'single');
+    });
+
+    it('spawns a new session with issueNumbers array', async () => {
+      const mockSession = {
+        id: '1',
+        issues: [
+          { number: 1, title: 'Issue 1' },
+          { number: 2, title: 'Issue 2' },
+          { number: 3, title: 'Issue 3' },
+        ],
+        status: 'registered',
+      };
+      mockMultiRepoService.spawn.mockResolvedValue(mockSession);
+
+      const app = createApp();
+      const response = await request(app)
+        .post('/api/sessions/repo-1')
+        .send({ issueNumbers: [1, 2, 3] });
+
+      expect(response.status).toBe(201);
+      expect(response.body.session).toEqual(mockSession);
+      expect(mockMultiRepoService.spawn).toHaveBeenCalledWith('repo-1', [1, 2, 3], 'single');
     });
 
     it('spawns with ralph mode and starts loop', async () => {
@@ -156,7 +179,7 @@ describe('Sessions API', () => {
         .send({});
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toBe('issueNumber is required');
+      expect(response.body.error).toBe('issueNumber or issueNumbers is required');
     });
 
     it('returns 400 when issueNumber is not a number', async () => {
@@ -166,7 +189,17 @@ describe('Sessions API', () => {
         .send({ issueNumber: 'abc' });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toBe('issueNumber is required');
+      expect(response.body.error).toBe('issueNumber or issueNumbers is required');
+    });
+
+    it('returns 400 when issueNumbers contains non-positive numbers', async () => {
+      const app = createApp();
+      const response = await request(app)
+        .post('/api/sessions/repo-1')
+        .send({ issueNumbers: [1, 0, -1] });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe('issueNumbers must be an array of positive numbers');
     });
   });
 

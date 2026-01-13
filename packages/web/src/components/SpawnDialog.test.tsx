@@ -1,7 +1,64 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import SpawnDialog from './SpawnDialog';
+import SpawnDialog, { parseIssueNumbers } from './SpawnDialog';
+
+describe('parseIssueNumbers', () => {
+  it('parses single issue number', () => {
+    const result = parseIssueNumbers('42');
+    expect(result).toEqual({ numbers: [42] });
+  });
+
+  it('parses comma-separated issue numbers', () => {
+    const result = parseIssueNumbers('1, 2, 3');
+    expect(result).toEqual({ numbers: [1, 2, 3] });
+  });
+
+  it('parses space-separated issue numbers', () => {
+    const result = parseIssueNumbers('1 2 3');
+    expect(result).toEqual({ numbers: [1, 2, 3] });
+  });
+
+  it('parses mixed comma and space separated issue numbers', () => {
+    const result = parseIssueNumbers('1, 2 3');
+    expect(result).toEqual({ numbers: [1, 2, 3] });
+  });
+
+  it('handles extra whitespace', () => {
+    const result = parseIssueNumbers('  1,  2,   3  ');
+    expect(result).toEqual({ numbers: [1, 2, 3] });
+  });
+
+  it('returns error for empty input', () => {
+    const result = parseIssueNumbers('');
+    expect(result).toEqual({ error: 'Please enter at least one issue number' });
+  });
+
+  it('returns error for whitespace-only input', () => {
+    const result = parseIssueNumbers('   ');
+    expect(result).toEqual({ error: 'Please enter at least one issue number' });
+  });
+
+  it('returns error for invalid input', () => {
+    const result = parseIssueNumbers('1, abc, 3');
+    expect(result).toEqual({ error: 'Invalid issue number(s): abc' });
+  });
+
+  it('returns error for multiple invalid inputs', () => {
+    const result = parseIssueNumbers('foo, bar');
+    expect(result).toEqual({ error: 'Invalid issue number(s): foo, bar' });
+  });
+
+  it('returns error for zero', () => {
+    const result = parseIssueNumbers('0');
+    expect(result).toEqual({ error: 'Invalid issue number(s): 0' });
+  });
+
+  it('returns error for negative numbers', () => {
+    const result = parseIssueNumbers('-1');
+    expect(result).toEqual({ error: 'Invalid issue number(s): -1' });
+  });
+});
 
 describe('SpawnDialog', () => {
   const mockOnClose = vi.fn();
@@ -36,7 +93,7 @@ describe('SpawnDialog', () => {
     // Use getAllByText since there are two elements with "Spawn Worker" (heading and button)
     expect(screen.getAllByText('Spawn Worker')).toHaveLength(2);
     expect(screen.getByText(/Repository/i)).toBeInTheDocument();
-    expect(screen.getByText(/Issue Number/i)).toBeInTheDocument();
+    expect(screen.getByText('Issue Number(s)')).toBeInTheDocument();
   });
 
   it('shows validation error for empty issue number', async () => {
@@ -49,7 +106,7 @@ describe('SpawnDialog', () => {
     const submitButton = screen.getByRole('button', { name: /Spawn Worker/i });
     fireEvent.click(submitButton);
 
-    expect(screen.getByText(/Please select a repo and enter an issue number/i)).toBeInTheDocument();
+    expect(screen.getByText(/Please enter at least one issue number/i)).toBeInTheDocument();
     expect(mockOnSpawn).not.toHaveBeenCalled();
   });
 
@@ -60,7 +117,7 @@ describe('SpawnDialog', () => {
       expect(screen.getByRole('combobox')).toBeInTheDocument();
     });
 
-    const issueInput = screen.getByPlaceholderText('123');
+    const issueInput = screen.getByPlaceholderText('e.g., 5 or 1, 2, 3');
     // Use fireEvent.change with value "0" which is invalid (must be > 0)
     fireEvent.change(issueInput, { target: { value: '0' } });
 
@@ -69,12 +126,12 @@ describe('SpawnDialog', () => {
     fireEvent.submit(form!);
 
     await waitFor(() => {
-      expect(screen.getByText(/Please enter a valid issue number/i)).toBeInTheDocument();
+      expect(screen.getByText(/Invalid issue number/i)).toBeInTheDocument();
     });
     expect(mockOnSpawn).not.toHaveBeenCalled();
   });
 
-  it('calls onSpawn with correct values on submit', async () => {
+  it('calls onSpawn with single issue as array on submit', async () => {
     const user = userEvent.setup();
     mockOnSpawn.mockResolvedValue(undefined);
 
@@ -84,16 +141,82 @@ describe('SpawnDialog', () => {
       expect(screen.getByRole('combobox')).toBeInTheDocument();
     });
 
-    const issueInput = screen.getByPlaceholderText('123');
+    const issueInput = screen.getByPlaceholderText('e.g., 5 or 1, 2, 3');
     await user.type(issueInput, '42');
 
     const submitButton = screen.getByRole('button', { name: /Spawn Worker/i });
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(mockOnSpawn).toHaveBeenCalledWith('repo-1', 42, 'single', undefined);
+      expect(mockOnSpawn).toHaveBeenCalledWith('repo-1', [42], 'single', undefined);
     });
     expect(mockOnClose).toHaveBeenCalled();
+  });
+
+  it('calls onSpawn with multiple comma-separated issues as array', async () => {
+    const user = userEvent.setup();
+    mockOnSpawn.mockResolvedValue(undefined);
+
+    render(<SpawnDialog isOpen={true} onClose={mockOnClose} onSpawn={mockOnSpawn} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox')).toBeInTheDocument();
+    });
+
+    const issueInput = screen.getByPlaceholderText('e.g., 5 or 1, 2, 3');
+    await user.type(issueInput, '1, 2, 3');
+
+    const submitButton = screen.getByRole('button', { name: /Spawn Worker/i });
+    fireEvent.click(submitButton);
+
+    await waitFor(() => {
+      expect(mockOnSpawn).toHaveBeenCalledWith('repo-1', [1, 2, 3], 'single', undefined);
+    });
+    expect(mockOnClose).toHaveBeenCalled();
+  });
+
+  it('calls onSpawn with multiple space-separated issues as array', async () => {
+    const user = userEvent.setup();
+    mockOnSpawn.mockResolvedValue(undefined);
+
+    render(<SpawnDialog isOpen={true} onClose={mockOnClose} onSpawn={mockOnSpawn} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox')).toBeInTheDocument();
+    });
+
+    const issueInput = screen.getByPlaceholderText('e.g., 5 or 1, 2, 3');
+    await user.type(issueInput, '4 5 6');
+
+    const submitButton = screen.getByRole('button', { name: /Spawn Worker/i });
+    fireEvent.click(submitButton);
+
+    await waitFor(() => {
+      expect(mockOnSpawn).toHaveBeenCalledWith('repo-1', [4, 5, 6], 'single', undefined);
+    });
+    expect(mockOnClose).toHaveBeenCalled();
+  });
+
+  it('shows validation error for mixed valid and invalid input', async () => {
+    const user = userEvent.setup();
+    mockOnSpawn.mockResolvedValue(undefined);
+
+    const { container } = render(<SpawnDialog isOpen={true} onClose={mockOnClose} onSpawn={mockOnSpawn} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox')).toBeInTheDocument();
+    });
+
+    const issueInput = screen.getByPlaceholderText('e.g., 5 or 1, 2, 3');
+    await user.type(issueInput, '1, abc, 3');
+
+    const form = container.querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Invalid issue number\(s\): abc/i)).toBeInTheDocument();
+    });
+    expect(mockOnSpawn).not.toHaveBeenCalled();
   });
 
   it('has execution mode toggle buttons', async () => {
@@ -134,7 +257,7 @@ describe('SpawnDialog', () => {
       expect(screen.getByRole('combobox')).toBeInTheDocument();
     });
 
-    const issueInput = screen.getByPlaceholderText('123');
+    const issueInput = screen.getByPlaceholderText('e.g., 5 or 1, 2, 3');
     await user.type(issueInput, '42');
 
     const submitButton = screen.getByRole('button', { name: /Spawn Worker/i });
