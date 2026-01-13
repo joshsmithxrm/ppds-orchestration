@@ -11,7 +11,7 @@ interface Repo {
 interface SpawnDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onSpawn: (repoId: string, issueNumber: number, mode: 'single' | 'ralph') => Promise<void>;
+  onSpawn: (repoId: string, issueNumber: number, mode: 'single' | 'ralph', iterations?: number) => Promise<void>;
 }
 
 function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
@@ -19,6 +19,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
   const [selectedRepo, setSelectedRepo] = useState<string>('');
   const [issueNumber, setIssueNumber] = useState<string>('');
   const [mode, setMode] = useState<'single' | 'ralph'>('single');
+  const [iterations, setIterations] = useState<string>('10');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,7 +62,8 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
     setError(null);
 
     try {
-      await onSpawn(selectedRepo, issueNum, mode);
+      const iterNum = mode === 'ralph' ? parseInt(iterations, 10) : undefined;
+      await onSpawn(selectedRepo, issueNum, mode, iterNum);
       setIssueNumber('');
       onClose();
     } catch (err) {
@@ -149,6 +151,25 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
                 : 'Worker completes one task per iteration, re-spawned automatically'}
             </p>
           </div>
+
+          {/* Ralph Iterations (only shown when Ralph mode is selected) */}
+          {mode === 'ralph' && (
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Iterations</label>
+              <input
+                type="number"
+                value={iterations}
+                onChange={(e) => setIterations(e.target.value)}
+                placeholder="10"
+                min="1"
+                max="100"
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Number of times to re-spawn the worker
+              </p>
+            </div>
+          )}
 
           {/* Error Display */}
           {error && (

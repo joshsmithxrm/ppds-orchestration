@@ -43,13 +43,16 @@ ralphRouter.get('/:repoId/:sessionId', (req: Request, res: Response) => {
 /**
  * POST /api/ralph/:repoId/:sessionId/start
  * Start a Ralph loop for a session.
+ * Body: { iterations?: number } - optional number of iterations (defaults to config value)
  */
 ralphRouter.post('/:repoId/:sessionId/start', async (req: Request, res: Response) => {
   try {
     const ralphManager: RalphLoopManager = req.app.locals.ralphManager;
     const { repoId, sessionId } = req.params;
+    const { iterations } = req.body as { iterations?: number };
 
-    const state = await ralphManager.startLoop(repoId, sessionId);
+    const options = iterations ? { iterations } : undefined;
+    const state = await ralphManager.startLoop(repoId, sessionId, options);
 
     res.json({ state });
   } catch (error) {

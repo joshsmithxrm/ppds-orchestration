@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import SpawnDialog from '../components/SpawnDialog';
-import { useSoundsContext } from '../App';
+import { useSoundsContext, useConfigContext } from '../App';
 
 interface Session {
   id: string;
@@ -62,7 +62,15 @@ function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
   const sounds = useSoundsContext();
+  const config = useConfigContext();
   const prevSessionsRef = useRef<Map<string, string>>(new Map());
+
+  // Helper to check if sound should play (respects muteRalph)
+  const shouldPlaySound = (session: Session | null) => {
+    if (!session) return true;
+    if (session.mode === 'ralph' && config?.sounds?.muteRalph) return false;
+    return true;
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -79,7 +87,16 @@ function Dashboard() {
         const sessionsData = await sessionsRes.json();
         const reposData = await reposRes.json();
 
-        setSessions(sessionsData.sessions || []);
+        const loadedSessions = sessionsData.sessions || [];
+
+        // Initialize prevSessionsRef with current statuses to prevent
+        // spurious sound triggers on first WebSocket update
+        for (const session of loadedSessions) {
+          const key = `${session.repoId}:${session.id}`;
+          prevSessionsRef.current.set(key, session.status);
+        }
+
+        setSessions(loadedSessions);
         setRepos(reposData.repos || []);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
@@ -103,21 +120,25 @@ function Dashboard() {
           if (exists) return prev;
           return [...prev, { ...data.session, repoId: data.repoId }];
         });
-        // Play spawn sound for new session
+        // Play spawn sound for new session (respects muteRalph)
         if (data.session.status === 'working' || data.session.status === 'registered') {
-          sounds?.playOnSpawn();
+          if (shouldPlaySound(data.session)) {
+            sounds?.playOnSpawn();
+          }
         }
       } else if (data.type === 'session:update' && data.session) {
         const key = `${data.repoId}:${data.sessionId}`;
         const prevStatus = prevSessionsRef.current.get(key);
         const newStatus = data.session.status;
 
-        // Play sounds on status transitions
+        // Play sounds on status transitions (respects muteRalph)
         if (prevStatus !== newStatus) {
-          if (newStatus === 'stuck') {
-            sounds?.playOnStuck();
-          } else if (newStatus === 'complete') {
-            sounds?.playOnComplete();
+          if (shouldPlaySound(data.session)) {
+            if (newStatus === 'stuck') {
+              sounds?.playOnStuck();
+            } else if (newStatus === 'complete') {
+              sounds?.playOnComplete();
+            }
           }
           prevSessionsRef.current.set(key, newStatus);
         }
@@ -156,12 +177,13 @@ function Dashboard() {
   const handleSpawn = async (
     repoId: string,
     issueNumber: number,
-    mode: 'single' | 'ralph'
+    mode: 'single' | 'ralph',
+    iterations?: number
   ) => {
     const res = await fetch(`/api/sessions/${repoId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ issueNumber, mode }),
+      body: JSON.stringify({ issueNumber, mode, iterations }),
     });
 
     if (!res.ok) {

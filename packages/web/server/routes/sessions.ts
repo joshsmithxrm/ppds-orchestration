@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { MultiRepoService } from '../services/multi-repo-service.js';
+import { RalphLoopManager } from '../services/ralph-loop-manager.js';
 import { SessionStatus, ExecutionMode } from '@ppds-orchestration/core';
 
 export const sessionsRouter = Router();
@@ -52,12 +53,14 @@ sessionsRouter.get('/:repoId/:sessionId', async (req: Request, res: Response) =>
 /**
  * POST /api/sessions/:repoId
  * Spawn a new worker session.
+ * Body: { issueNumber: number, mode?: 'single' | 'ralph', iterations?: number }
  */
 sessionsRouter.post('/:repoId', async (req: Request, res: Response) => {
   try {
     const service: MultiRepoService = req.app.locals.multiRepoService;
+    const ralphManager: RalphLoopManager = req.app.locals.ralphManager;
     const { repoId } = req.params;
-    const { issueNumber, mode = 'single' } = req.body;
+    const { issueNumber, mode = 'single', iterations } = req.body;
 
     if (!issueNumber || typeof issueNumber !== 'number') {
       return res.status(400).json({ error: 'issueNumber is required' });
@@ -68,6 +71,12 @@ sessionsRouter.post('/:repoId', async (req: Request, res: Response) => {
       issueNumber,
       mode as ExecutionMode
     );
+
+    // Start Ralph loop if mode is 'ralph'
+    if (mode === 'ralph') {
+      const options = iterations ? { iterations } : undefined;
+      await ralphManager.startLoop(repoId, session.id, options);
+    }
 
     res.status(201).json({ session, repoId });
   } catch (error) {

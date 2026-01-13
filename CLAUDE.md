@@ -53,12 +53,16 @@ npm run test
 
 ### Worker Context Files
 Each worker worktree contains:
-- `session-context.json` - Static identity (never changes after spawn)
-- `session-state.json` - Dynamic state (updated for message forwarding)
+- `session-context.json` - Static identity including `sessionFilePath` (path to main session file)
 - `.claude/session-prompt.md` - Human-readable workflow instructions
 
 ### Status Reporting
-Workers should call `orch update --id <issue> --status <status>` at phase transitions.
+Workers update status by modifying the main session file directly:
+1. Read `session-context.json` to get `sessionFilePath`
+2. Read the session file, update `status` and `lastHeartbeat`
+3. Write the updated JSON back
+
+The `SessionWatcher` detects changes to main session files and broadcasts updates via WebSocket.
 
 ## Coding Standards
 
@@ -117,3 +121,16 @@ Worker prompts include:
 3. Status reporting commands
 4. Workflow phases (planning → implementation → shipping)
 5. Domain gates (when to escalate)
+
+## Web Dashboard
+
+### Running in Dev Mode
+```bash
+npm run dev -w packages/web
+```
+
+- Backend API: `http://localhost:3847`
+- Vite dev server: `http://localhost:5173` (auto-increments if port busy)
+- **Access via Vite port** (e.g., `http://localhost:5173`), not backend port
+- WebSocket real-time updates won't work in dev mode (Vite doesn't proxy WS)
+- For full WebSocket testing, use production build: `npm run build && npm run start -w packages/web`

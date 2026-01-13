@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {
   SessionState,
   RalphConfig,
@@ -25,11 +27,21 @@ export interface RalphLoopState {
   repoId: string;
   sessionId: string;
   config: RalphConfig;
+  /** Target number of iterations for this loop (from spawn-time options or config default) */
+  targetIterations: number;
   currentIteration: number;
   state: 'running' | 'waiting' | 'done' | 'stuck' | 'paused';
   iterations: RalphIteration[];
   consecutiveFailures: number;
   lastChecked?: string;
+}
+
+/**
+ * Options for starting a Ralph loop.
+ */
+export interface RalphLoopOptions {
+  /** Number of iterations to run (defaults to config.defaultIterations) */
+  iterations?: number;
 }
 
 type RalphEventCallback = (
@@ -55,8 +67,11 @@ export class RalphLoopManager {
 
   /**
    * Start monitoring a session for Ralph loop.
+   * @param repoId Repository identifier
+   * @param sessionId Session identifier
+   * @param options Optional loop configuration (iterations count, etc.)
    */
-  async startLoop(repoId: string, sessionId: string): Promise<RalphLoopState> {
+  async startLoop(repoId: string, sessionId: string, options?: RalphLoopOptions): Promise<RalphLoopState> {
     const key = this.getKey(repoId, sessionId);
 
     if (this.loops.has(key)) {
@@ -64,10 +79,13 @@ export class RalphLoopManager {
     }
 
     const effectiveConfig = getRepoEffectiveConfig(this.centralConfig, repoId);
+    const targetIterations = options?.iterations ?? effectiveConfig.ralph.defaultIterations;
+
     const state: RalphLoopState = {
       repoId,
       sessionId,
       config: effectiveConfig.ralph,
+      targetIterations,
       currentIteration: 1,
       state: 'running',
       iterations: [{
@@ -205,9 +223,13 @@ export class RalphLoopManager {
         return session.status === doneSignal.value;
 
       case 'file':
-        // Would check if file exists in worktree
-        // For now, just return false
-        return false;
+        // Check if file exists in worktree
+        const filePath = path.join(session.worktreePath, doneSignal.value);
+        try {
+          return fs.existsSync(filePath);
+        } catch {
+          return false;
+        }
 
       case 'exit_code':
         // Exit code checking requires process tracking
@@ -232,9 +254,9 @@ export class RalphLoopManager {
 
     this.emit('iteration_end', state);
 
-    // Check max iterations
-    if (state.currentIteration >= state.config.maxIterations) {
-      this.handleLoopStuck(state, `Max iterations (${state.config.maxIterations}) reached`);
+    // Check if target iterations reached
+    if (state.currentIteration >= state.targetIterations) {
+      this.handleLoopDone(state, `Target iterations (${state.targetIterations}) completed`);
       return;
     }
 

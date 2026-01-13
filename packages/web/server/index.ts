@@ -3,6 +3,7 @@ import cors from 'cors';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { sessionsRouter } from './routes/sessions.js';
 import { reposRouter } from './routes/repos.js';
@@ -72,9 +73,9 @@ app.get('/api/health', (_req, res) => {
 const wss = new WebSocketServer({ server, path: '/ws' });
 setupWebSocket(wss, multiRepoService);
 
-// Serve static files in production
-if (process.env.NODE_ENV === 'production') {
-  const clientPath = path.join(__dirname, '../client');
+// Serve static files (always serve if client directory exists)
+const clientPath = path.join(__dirname, '../client');
+if (fs.existsSync(clientPath)) {
   app.use(express.static(clientPath));
   app.get('*', (_req, res) => {
     res.sendFile(path.join(clientPath, 'index.html'));
