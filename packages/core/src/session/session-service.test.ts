@@ -177,8 +177,8 @@ describe('SessionService', () => {
     });
   });
 
-  describe('cancel', () => {
-    it('should cancel a session and remove worktree', async () => {
+  describe('delete', () => {
+    it('should delete a session and remove worktree', async () => {
       const sessionsDir = path.join(tempDir, 'test-project', 'sessions');
       fs.mkdirSync(sessionsDir, { recursive: true });
 
@@ -192,7 +192,7 @@ describe('SessionService', () => {
         JSON.stringify(session)
       );
 
-      await service.cancel('123');
+      await service.delete('123');
 
       // Session file should be deleted
       expect(fs.existsSync(path.join(sessionsDir, 'work-123.json'))).toBe(false);
@@ -213,14 +213,20 @@ describe('SessionService', () => {
         JSON.stringify(session)
       );
 
-      await service.cancel('123', { keepWorktree: true });
+      await service.delete('123', { keepWorktree: true });
 
       // Worktree directory should still exist
       // (In real usage, git worktree remove would be called, but we're not testing that)
       expect(fs.existsSync(worktreePath)).toBe(true);
     });
 
-    it('should reject cancel on completed session', async () => {
+    it('should throw if session not found', async () => {
+      await expect(service.delete('non-existent')).rejects.toThrow(
+        "Session 'non-existent' not found"
+      );
+    });
+
+    it('should delete completed sessions', async () => {
       const sessionsDir = path.join(tempDir, 'test-project', 'sessions');
       fs.mkdirSync(sessionsDir, { recursive: true });
 
@@ -237,7 +243,149 @@ describe('SessionService', () => {
         JSON.stringify(session)
       );
 
-      await expect(service.cancel('123')).rejects.toThrow('Cannot cancel a completed session');
+      // Should not throw - delete works on any status
+      await service.delete('123');
+      expect(fs.existsSync(path.join(sessionsDir, 'work-123.json'))).toBe(false);
+    });
+  });
+
+  describe('restart', () => {
+    let sessionsDir: string;
+    let worktreePath: string;
+
+    beforeEach(() => {
+      sessionsDir = path.join(tempDir, 'test-project', 'sessions');
+      fs.mkdirSync(sessionsDir, { recursive: true });
+
+      worktreePath = path.join(tempDir, 'test-worktree');
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Create .claude directory with prompt file
+      const claudeDir = path.join(worktreePath, '.claude');
+      fs.mkdirSync(claudeDir, { recursive: true });
+      fs.writeFileSync(path.join(claudeDir, 'session-prompt.md'), '# Test prompt');
+    });
+
+    it('should throw if session not found', async () => {
+      await expect(service.restart('non-existent')).rejects.toThrow(
+        "Session 'non-existent' not found"
+      );
+    });
+
+    it('should throw if session is not stuck', async () => {
+      const session: SessionState = {
+        ...createTestSession('123', [123], worktreePath),
+        status: 'working',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
+
+      await expect(service.restart('123')).rejects.toThrow(
+        'Can only restart stuck sessions (current status: working)'
+      );
+    });
+
+    it('should throw if worktree does not exist', async () => {
+      const nonExistentWorktree = path.join(tempDir, 'non-existent-worktree');
+      const session: SessionState = {
+        ...createTestSession('123', [123], nonExistentWorktree),
+        status: 'stuck',
+        stuckReason: 'Test stuck reason',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
+
+      await expect(service.restart('123')).rejects.toThrow(
+        `Worktree no longer exists at ${nonExistentWorktree}`
+      );
+    });
+
+    it('should throw if prompt file does not exist', async () => {
+      // Remove the prompt file
+      fs.unlinkSync(path.join(worktreePath, '.claude', 'session-prompt.md'));
+
+      const session: SessionState = {
+        ...createTestSession('123', [123], worktreePath),
+        status: 'stuck',
+        stuckReason: 'Test stuck reason',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
+
+      await expect(service.restart('123')).rejects.toThrow(
+        `Worker prompt not found at ${path.join(worktreePath, '.claude', 'session-prompt.md')}`
+      );
+    });
+
+    it('should restart stuck session and update status to working', async () => {
+      const session: SessionState = {
+        ...createTestSession('123', [123], worktreePath),
+        status: 'stuck',
+        stuckReason: 'Need guidance',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
+
+      const restarted = await service.restart('123');
+
+      expect(restarted.status).toBe('working');
+      expect(restarted.stuckReason).toBeUndefined();
+      expect(mockSpawner.spawn).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('spawn overlap detection', () => {
+    let sessionsDir: string;
+
+    beforeEach(() => {
+      sessionsDir = path.join(tempDir, 'test-project', 'sessions');
+      fs.mkdirSync(sessionsDir, { recursive: true });
+    });
+
+    it('should throw if issue is already in an active session', async () => {
+      const worktreePath = path.join(tempDir, 'existing-worktree');
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Create an existing session with issue 2
+      const existingSession: SessionState = {
+        ...createTestSession('2', [2, 4, 5], worktreePath),
+        status: 'working',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-2.json'), JSON.stringify(existingSession));
+
+      // Try to spawn a session that includes issue 2
+      await expect(service.spawn([1, 2, 3])).rejects.toThrow(
+        "Issue(s) #2 already in active session '2'"
+      );
+    });
+
+    it('should allow spawn if overlapping session is completed', async () => {
+      const worktreePath = path.join(tempDir, 'existing-worktree');
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Create a completed session with issue 2
+      const existingSession: SessionState = {
+        ...createTestSession('2', [2], worktreePath),
+        status: 'complete',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-2.json'), JSON.stringify(existingSession));
+
+      // This should not throw (completed sessions don't block)
+      // Note: This will fail at GitHub fetch step, but we're testing the overlap detection
+      await expect(service.spawn([2])).rejects.toThrow(/Failed to fetch issue/);
+    });
+
+    it('should detect multiple overlapping issues', async () => {
+      const worktreePath = path.join(tempDir, 'existing-worktree');
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Create an existing session with issues 2, 4, 5
+      const existingSession: SessionState = {
+        ...createTestSession('2', [2, 4, 5], worktreePath),
+        status: 'working',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-2.json'), JSON.stringify(existingSession));
+
+      // Try to spawn a session that includes issues 2 and 4
+      await expect(service.spawn([1, 2, 4])).rejects.toThrow(
+        "Issue(s) #2, #4 already in active session '2'"
+      );
     });
   });
 

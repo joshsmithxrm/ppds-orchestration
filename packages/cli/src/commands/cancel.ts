@@ -1,9 +1,5 @@
 import chalk from 'chalk';
-import { createSessionService, SessionState } from '@ppds-orchestration/core';
-
-function formatIssues(session: SessionState): string {
-  return session.issues.map(i => `#${i.number}`).join(', ');
-}
+import { createSessionService, formatIssues } from '@ppds-orchestration/core';
 
 export async function cancelCommand(
   sessionId: string,
@@ -17,9 +13,10 @@ export async function cancelCommand(
     throw new Error(`Session '${sessionId}' not found`);
   }
 
-  await service.cancel(sessionId, { keepWorktree: options.keepWorktree });
+  // cancel is now an alias for delete
+  await service.delete(sessionId, { keepWorktree: options.keepWorktree });
 
-  console.log(chalk.yellow(`\u2713 Session ${formatIssues(session)} cancelled`));
+  console.log(chalk.yellow(`\u2713 Session ${formatIssues(session)} deleted`));
 
   if (options.keepWorktree) {
     console.log(`  Worktree preserved at: ${session.worktreePath}`);

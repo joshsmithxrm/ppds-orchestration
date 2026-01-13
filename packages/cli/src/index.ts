@@ -44,15 +44,21 @@ program
   .command('spawn <issues...>')
   .description('Spawn a new worker for GitHub issue(s)')
   .action(withErrorHandling(async (issues: string[]) => {
-    await spawnCommand(issues.map(i => parseInt(i, 10)));
+    // Validate issue numbers
+    const parsedIssues = issues.map(i => parseInt(i, 10));
+    const invalidIssues = issues.filter((_, i) => Number.isNaN(parsedIssues[i]));
+    if (invalidIssues.length > 0) {
+      throw new Error(`Invalid issue number(s): ${invalidIssues.join(', ')}. Issue numbers must be numeric.`);
+    }
+    await spawnCommand(parsedIssues);
   }));
 
 // list command
 program
   .command('list')
   .alias('ls')
-  .description('List all active sessions')
-  .option('-a, --all', 'Include completed and cancelled sessions')
+  .description('List all sessions')
+  .option('-a, --all', 'Include completed and cancelled sessions (deprecated, now default)')
   .option('--json', 'Output as JSON')
   .action(withErrorHandling(listCommand));
 
@@ -86,16 +92,23 @@ program
   .option('--keep-worktree', 'Keep the worktree for debugging')
   .action(withErrorHandling(cancelCommand));
 
-// cancel-all command
+// delete-all command (formerly cancel-all)
 program
-  .command('cancel-all')
-  .description('Cancel all active sessions')
+  .command('delete-all')
+  .alias('cancel-all')
+  .description('Delete all active sessions')
   .option('--keep-worktrees', 'Keep worktrees for debugging')
   .action(withErrorHandling(async (options: { keepWorktrees?: boolean }) => {
-    const { createSessionService } = await import('@ppds-orchestration/core');
+    const { createSessionService, isTerminalStatus } = await import('@ppds-orchestration/core');
     const service = await createSessionService();
-    const count = await service.cancelAll({ keepWorktrees: options.keepWorktrees });
-    console.log(chalk.yellow(`Cancelled ${count} session(s)`));
+    const sessions = await service.list();
+    const activeSessions = sessions.filter(s => !isTerminalStatus(s.status));
+    let count = 0;
+    for (const session of activeSessions) {
+      await service.delete(session.id, { keepWorktree: options.keepWorktrees });
+      count++;
+    }
+    console.log(chalk.yellow(`Deleted ${count} session(s)`));
   }));
 
 // heartbeat command

@@ -116,7 +116,7 @@ sessionsRouter.patch('/:repoId/:sessionId', async (req: Request, res: Response) 
         break;
 
       case 'cancel':
-        await service.cancel(repoId, sessionId);
+        await service.delete(repoId, sessionId);
         return res.json({ success: true });
 
       case 'update':
@@ -152,7 +152,7 @@ sessionsRouter.delete('/:repoId/:sessionId', async (req: Request, res: Response)
     const { repoId, sessionId } = req.params;
     const keepWorktree = req.query.keepWorktree === 'true';
 
-    await service.cancel(repoId, sessionId, keepWorktree);
+    await service.delete(repoId, sessionId, keepWorktree);
 
     res.json({ success: true });
   } catch (error) {

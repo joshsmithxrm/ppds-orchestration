@@ -1,5 +1,26 @@
 import chalk from 'chalk';
-import { createSessionService } from '@ppds-orchestration/core';
+import { createSessionService, SessionStatus } from '@ppds-orchestration/core';
+
+// CLI-specific status colors (not exported from core to avoid browser issues)
+const STATUS_COLORS: Record<SessionStatus, (s: string) => string> = {
+  registered: chalk.gray,
+  planning: chalk.blue,
+  planning_complete: chalk.magenta,
+  working: chalk.green,
+  shipping: chalk.cyan,
+  reviews_in_progress: chalk.cyan,
+  pr_ready: chalk.greenBright,
+  stuck: chalk.red,
+  paused: chalk.yellow,
+  complete: chalk.dim,
+  cancelled: chalk.dim,
+};
+
+function getColoredStatusText(status: SessionStatus): string {
+  const text = status.toUpperCase().replace('_', ' ');
+  const colorFn = STATUS_COLORS[status] ?? ((s: string) => s);
+  return colorFn(text);
+}
 
 export async function getCommand(sessionId: string, options: { json?: boolean }): Promise<void> {
   const service = await createSessionService();
@@ -37,7 +58,7 @@ export async function getCommand(sessionId: string, options: { json?: boolean })
     console.log();
   }
 
-  console.log(`  Status:      ${formatStatus(session.status)}`);
+  console.log(`  Status:      ${getColoredStatusText(session.status)}`);
   console.log(`  Branch:      ${chalk.cyan(session.branch)}`);
   console.log(`  Worktree:    ${session.worktreePath}`);
   console.log(`  Started:     ${new Date(session.startedAt).toLocaleString()}`);
@@ -78,21 +99,3 @@ export async function getCommand(sessionId: string, options: { json?: boolean })
   }
 }
 
-function formatStatus(status: string): string {
-  const colors: Record<string, (s: string) => string> = {
-    registered: chalk.gray,
-    planning: chalk.blue,
-    planning_complete: chalk.magenta,
-    working: chalk.green,
-    shipping: chalk.cyan,
-    reviews_in_progress: chalk.cyan,
-    pr_ready: chalk.greenBright,
-    stuck: chalk.red,
-    paused: chalk.yellow,
-    complete: chalk.green,
-    cancelled: chalk.gray,
-  };
-
-  const formatted = status.toUpperCase().replace('_', ' ');
-  return colors[status]?.(formatted) ?? formatted;
-}

@@ -278,13 +278,13 @@ export class MultiRepoService {
   /**
    * Cancel session.
    */
-  async cancel(
+  async delete(
     repoId: string,
     sessionId: string,
     keepWorktree?: boolean
   ): Promise<void> {
     const service = this.getService(repoId);
-    return service.cancel(sessionId, { keepWorktree });
+    return service.delete(sessionId, { keepWorktree });
   }
 
   /**

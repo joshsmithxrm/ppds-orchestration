@@ -1,9 +1,5 @@
 import chalk from 'chalk';
-import { createSessionService, SessionState } from '@ppds-orchestration/core';
-
-function formatIssues(session: SessionState): string {
-  return session.issues.map(i => `#${i.number}`).join(', ');
-}
+import { createSessionService, formatIssues } from '@ppds-orchestration/core';
 
 export async function forwardCommand(sessionId: string, message: string): Promise<void> {
   const service = await createSessionService();

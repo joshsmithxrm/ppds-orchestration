@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { createSessionService } from '@ppds-orchestration/core';
+import { createSessionService, formatIssues } from '@ppds-orchestration/core';
 
 export async function deleteCommand(
   sessionId: string,
@@ -12,8 +12,7 @@ export async function deleteCommand(
     throw new Error(`Session '${sessionId}' not found`);
   }
 
-  const issues = session.issues.map(i => `#${i.number}`).join(', ');
-  console.log(chalk.blue(`Deleting session ${sessionId} (${issues})...`));
+  console.log(chalk.blue(`Deleting session ${sessionId} (${formatIssues(session)})...`));
 
   await service.delete(sessionId, { keepWorktree: options.keepWorktree });
 

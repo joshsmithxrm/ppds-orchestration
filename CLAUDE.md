@@ -20,7 +20,7 @@ ppds-orchestration/
 │   │   └── src/
 │   │       └── commands/   # Individual CLI commands
 │   │
-│   └── dashboard/      # Tauri + React dashboard (planned)
+│   └── web/            # React web dashboard
 │
 ├── docs/               # Conceptual documentation
 ├── templates/          # Worker prompt templates

@@ -1,21 +1,18 @@
 import chalk from 'chalk';
-import { createSessionService, SessionState, STALE_THRESHOLD_MS } from '@ppds-orchestration/core';
+import {
+  createSessionService,
+  SessionState,
+  SessionStatus,
+  STALE_THRESHOLD_MS,
+  STATUS_ICONS,
+  ACTIVE_STATUSES_FOR_STALE,
+  formatIssues,
+  formatSessionTitle,
+  isTerminalStatus,
+} from '@ppds-orchestration/core';
 
-const STATUS_ICONS: Record<string, string> = {
-  registered: '[ ]',
-  planning: '[~]',
-  planning_complete: '[P]',
-  working: '[*]',
-  shipping: '[>]',
-  reviews_in_progress: '[R]',
-  pr_ready: '[+]',
-  stuck: '[!]',
-  paused: '[||]',
-  complete: '[\u2713]',
-  cancelled: '[x]',
-};
-
-const STATUS_COLORS: Record<string, (s: string) => string> = {
+// CLI-specific chalk color mappings (not exported from core to avoid browser issues)
+const STATUS_COLORS: Record<SessionStatus, (s: string) => string> = {
   registered: chalk.gray,
   planning: chalk.blue,
   planning_complete: chalk.magenta,
@@ -48,32 +45,19 @@ function isStale(session: SessionState): boolean {
   return Date.now() - lastHeartbeat > STALE_THRESHOLD_MS;
 }
 
-function formatIssues(session: SessionState): string {
-  if (session.issues.length === 1) {
-    return `#${session.issues[0].number}`;
-  }
-  return session.issues.map(i => `#${i.number}`).join(', ');
-}
-
-function formatTitle(session: SessionState): string {
-  if (session.issues.length === 1) {
-    return session.issues[0].title;
-  }
-  return `${session.issues.length} issues`;
-}
-
 function formatSession(session: SessionState): string {
-  const isCompleted = session.status === 'complete' || session.status === 'cancelled';
+  const isCompleted = isTerminalStatus(session.status);
   const colorFn = isCompleted ? chalk.dim : (s: string) => s;
 
-  const icon = isStale(session) && session.status === 'working'
+  // Show stale icon for active statuses that haven't sent heartbeat recently
+  const icon = isStale(session) && ACTIVE_STATUSES_FOR_STALE.includes(session.status)
     ? chalk.yellow('[?]')
     : STATUS_COLORS[session.status]?.(STATUS_ICONS[session.status] ?? '[ ]') ?? '[ ]';
 
   const status = session.status.toUpperCase().replace('_', ' ');
   const elapsed = getElapsedTime(session.startedAt);
   const issues = formatIssues(session);
-  const title = formatTitle(session);
+  const title = formatSessionTitle(session);
 
   let line = colorFn(`${icon} ${issues} - ${STATUS_COLORS[session.status]?.(status) ?? status} (${elapsed}) - ${title}`);
 
@@ -112,8 +96,8 @@ export async function listCommand(options: { all?: boolean; json?: boolean }): P
   }
 
   // Separate running and completed sessions
-  const running = sessions.filter(s => s.status !== 'complete' && s.status !== 'cancelled');
-  const completed = sessions.filter(s => s.status === 'complete' || s.status === 'cancelled');
+  const running = sessions.filter(s => !isTerminalStatus(s.status));
+  const completed = sessions.filter(s => isTerminalStatus(s.status));
 
   if (running.length > 0) {
     console.log(chalk.bold(`Active Sessions (${running.length}):\n`));

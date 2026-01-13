@@ -11,7 +11,7 @@ const mockMultiRepoService = {
   forward: vi.fn(),
   pause: vi.fn(),
   resume: vi.fn(),
-  cancel: vi.fn(),
+  delete: vi.fn(),
   updateStatus: vi.fn(),
 };
 
@@ -224,7 +224,7 @@ describe('Sessions API', () => {
     });
 
     it('cancels a session', async () => {
-      mockMultiRepoService.cancel.mockResolvedValue(undefined);
+      mockMultiRepoService.delete.mockResolvedValue(undefined);
 
       const app = createApp();
       const response = await request(app)
@@ -233,7 +233,7 @@ describe('Sessions API', () => {
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
-      expect(mockMultiRepoService.cancel).toHaveBeenCalledWith('repo-1', '123');
+      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123');
     });
 
     it('updates session status', async () => {
@@ -267,24 +267,24 @@ describe('Sessions API', () => {
 
   describe('DELETE /api/sessions/:repoId/:sessionId', () => {
     it('deletes a session', async () => {
-      mockMultiRepoService.cancel.mockResolvedValue(undefined);
+      mockMultiRepoService.delete.mockResolvedValue(undefined);
 
       const app = createApp();
       const response = await request(app).delete('/api/sessions/repo-1/123');
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
-      expect(mockMultiRepoService.cancel).toHaveBeenCalledWith('repo-1', '123', false);
+      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123', false);
     });
 
     it('keeps worktree when requested', async () => {
-      mockMultiRepoService.cancel.mockResolvedValue(undefined);
+      mockMultiRepoService.delete.mockResolvedValue(undefined);
 
       const app = createApp();
       const response = await request(app).delete('/api/sessions/repo-1/123?keepWorktree=true');
 
       expect(response.status).toBe(200);
-      expect(mockMultiRepoService.cancel).toHaveBeenCalledWith('repo-1', '123', true);
+      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123', true);
     });
   });
 });

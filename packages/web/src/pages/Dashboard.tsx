@@ -3,6 +3,35 @@ import { Link } from 'react-router-dom';
 import SpawnDialog from '../components/SpawnDialog';
 import { useSoundsContext, useConfigContext } from '../App';
 
+// Note: These are duplicated from core to avoid importing Node.js dependencies into browser
+const statusColors: Record<string, string> = {
+  registered: 'bg-gray-500',
+  planning: 'bg-blue-500',
+  planning_complete: 'bg-purple-500',
+  working: 'bg-green-500',
+  shipping: 'bg-cyan-500',
+  reviews_in_progress: 'bg-cyan-500',
+  pr_ready: 'bg-emerald-400',
+  stuck: 'bg-red-500',
+  paused: 'bg-yellow-500',
+  complete: 'bg-gray-600',
+  cancelled: 'bg-gray-600',
+};
+
+const statusIcons: Record<string, string> = {
+  registered: '[ ]',
+  planning: '[~]',
+  planning_complete: '[P]',
+  working: '[*]',
+  shipping: '[>]',
+  reviews_in_progress: '[R]',
+  pr_ready: '[+]',
+  stuck: '[!]',
+  paused: '[||]',
+  complete: '[\u2713]',
+  cancelled: '[x]',
+};
+
 interface Session {
   id: string;
   repoId: string;
@@ -26,34 +55,6 @@ interface Repo {
     complete: number;
   };
 }
-
-const statusColors: Record<string, string> = {
-  registered: 'bg-gray-500',
-  planning: 'bg-blue-500',
-  planning_complete: 'bg-purple-500',
-  working: 'bg-green-500',
-  shipping: 'bg-cyan-500',
-  reviews_in_progress: 'bg-cyan-500',
-  pr_ready: 'bg-emerald-400',
-  stuck: 'bg-red-500',
-  paused: 'bg-yellow-500',
-  complete: 'bg-green-600',
-  cancelled: 'bg-gray-600',
-};
-
-const statusIcons: Record<string, string> = {
-  registered: '[ ]',
-  planning: '[~]',
-  planning_complete: '[P]',
-  working: '[*]',
-  shipping: '[>]',
-  reviews_in_progress: '[R]',
-  pr_ready: '[+]',
-  stuck: '[!]',
-  paused: '[||]',
-  complete: '[✓]',
-  cancelled: '[x]',
-};
 
 type FilterCategory = 'active' | 'stuck' | 'completed';
 

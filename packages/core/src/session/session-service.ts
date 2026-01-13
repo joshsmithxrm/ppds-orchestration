@@ -17,6 +17,7 @@ import { SessionStore } from './session-store.js';
 import { GitUtils } from '../git/git-utils.js';
 import { WorkerSpawner } from '../spawner/worker-spawner.js';
 import { createSpawner } from '../spawner/windows-terminal-spawner.js';
+import { WorkerPromptBuilder } from './worker-prompt-builder.js';
 
 export interface SessionServiceConfig {
   /** Name of the project (used for session storage path). */
@@ -65,6 +66,7 @@ export class SessionService {
   private readonly store: SessionStore;
   private readonly gitUtils: GitUtils;
   private readonly spawner: WorkerSpawner;
+  private readonly promptBuilder: WorkerPromptBuilder;
   private readonly config: SessionServiceConfig;
 
   constructor(config: SessionServiceConfig) {
@@ -72,6 +74,7 @@ export class SessionService {
     this.store = new SessionStore(config.projectName, config.baseDir);
     this.gitUtils = new GitUtils(config.repoRoot);
     this.spawner = config.spawner ?? createSpawner();
+    this.promptBuilder = new WorkerPromptBuilder();
   }
 
   /**
@@ -91,16 +94,29 @@ export class SessionService {
     const sessionId = primaryIssue.toString();
     const mode = options?.mode ?? 'single';
 
-    // Check if any of these issues already have active sessions
+    // Check for overlap with existing combined sessions
+    // (e.g., if session [2,4,5] exists and we try to spawn [1,2,3], issue #2 conflicts)
+    const allSessions = await this.store.listAll();
+    for (const existing of allSessions) {
+      if (existing.status === 'complete' || existing.status === 'cancelled') continue;
+      const existingIssues = getIssueNumbers(existing);
+      const overlap = issueNums.filter(n => existingIssues.includes(n));
+      if (overlap.length > 0) {
+        throw new Error(
+          `Issue(s) ${overlap.map(n => `#${n}`).join(', ')} already in active session '${existing.id}'`
+        );
+      }
+    }
+
+    // Clean up any completed/cancelled sessions with matching IDs
     for (const issueNum of issueNums) {
       const existingId = issueNum.toString();
       if (this.store.exists(existingId)) {
         const existing = await this.store.load(existingId);
-        if (existing && existing.status !== 'complete' && existing.status !== 'cancelled') {
-          throw new Error(`Issue #${issueNum} already has an active session (status: ${existing.status})`);
+        if (existing && (existing.status === 'complete' || existing.status === 'cancelled')) {
+          // Session is complete/cancelled - allow re-spawn by deleting old session
+          await this.store.delete(existingId);
         }
-        // Session is complete/cancelled - allow re-spawn by deleting old session
-        await this.store.delete(existingId);
       }
     }
 
@@ -410,34 +426,8 @@ export class SessionService {
   }
 
   /**
-   * Cancels a session.
-   */
-  async cancel(sessionId: string, options?: { keepWorktree?: boolean }): Promise<void> {
-    const session = await this.store.load(sessionId);
-
-    if (!session) {
-      throw new Error(`Session '${sessionId}' not found`);
-    }
-
-    // Cannot cancel completed sessions
-    if (session.status === 'complete') {
-      throw new Error('Cannot cancel a completed session');
-    }
-
-    // Skip intermediate 'cancelled' status update - delete directly to avoid
-    // race condition where watcher broadcasts 'cancelled' before deletion
-
-    // Remove worktree unless keepWorktree is true
-    if (!options?.keepWorktree && fs.existsSync(session.worktreePath)) {
-      await this.gitUtils.removeWorktree(session.worktreePath);
-    }
-
-    // Remove session file
-    await this.store.delete(sessionId);
-  }
-
-  /**
-   * Deletes a session (for removing completed sessions from the list).
+   * Deletes a session and its worktree.
+   * This consolidates the former cancel() and delete() methods.
    */
   async delete(sessionId: string, options?: { keepWorktree?: boolean }): Promise<void> {
     const session = await this.store.load(sessionId);
@@ -453,23 +443,6 @@ export class SessionService {
 
     // Remove session file
     await this.store.delete(sessionId);
-  }
-
-  /**
-   * Cancels all active sessions.
-   */
-  async cancelAll(options?: { keepWorktrees?: boolean }): Promise<number> {
-    const sessions = await this.listRunning();
-    let count = 0;
-
-    for (const session of sessions) {
-      if (['working', 'stuck', 'paused', 'registered', 'planning', 'planning_complete'].includes(session.status)) {
-        await this.cancel(session.id, { keepWorktree: options?.keepWorktrees });
-        count++;
-      }
-    }
-
-    return count;
   }
 
   /**
@@ -652,158 +625,16 @@ export class SessionService {
     }
 
     const promptPath = path.join(claudeDir, 'session-prompt.md');
-    const primaryIssue = issues[0];
-    const issueNumbers = issues.map(i => i.number);
-    const isMultiIssue = issues.length > 1;
 
-    // Build the header based on single vs multi-issue
-    let prompt: string;
-    if (isMultiIssue) {
-      prompt = `# Session: Issues ${issueNumbers.map(n => `#${n}`).join(', ')}
-
-## Repository Context
-
-**IMPORTANT:** For all GitHub operations (CLI and MCP tools), use these values:
-- Owner: \`${this.config.githubOwner}\`
-- Repo: \`${this.config.githubRepo}\`
-- Issues: ${issueNumbers.map(n => `\`#${n}\``).join(', ')}
-- Branch: \`${branchName}\`
-
-Examples:
-\`\`\`bash
-gh issue view ${primaryIssue.number} --repo ${this.config.githubOwner}/${this.config.githubRepo}
-gh pr create --repo ${this.config.githubOwner}/${this.config.githubRepo} ...
-\`\`\`
-
-## Issues
-
-${issues.map(issue => `### Issue #${issue.number}: ${issue.title}
-
-${issue.body || '_No description provided._'}
-`).join('\n')}
-
-## Combined Implementation
-
-You are implementing **${issues.length} related issues** in a single PR.
-
-**Approach:**
-1. Plan how these issues relate to each other
-2. Identify shared components or dependencies
-3. Implement in a logical order
-4. Create ONE PR that addresses all issues
-
-**PR Requirements:**
-- Title should reference the primary issue or summarize all
-- Body should have sections for each issue addressed
-- Use \`Closes ${issueNumbers.map(n => `#${n}`).join(', Closes ')}\` to auto-close all issues
-`;
-    } else {
-      prompt = `# Session: Issue #${primaryIssue.number}
-
-## Repository Context
-
-**IMPORTANT:** For all GitHub operations (CLI and MCP tools), use these values:
-- Owner: \`${this.config.githubOwner}\`
-- Repo: \`${this.config.githubRepo}\`
-- Issue: \`#${primaryIssue.number}\`
-- Branch: \`${branchName}\`
-
-Examples:
-\`\`\`bash
-gh issue view ${primaryIssue.number} --repo ${this.config.githubOwner}/${this.config.githubRepo}
-gh pr create --repo ${this.config.githubOwner}/${this.config.githubRepo} ...
-\`\`\`
-
-## Issue
-**${primaryIssue.title}**
-
-${primaryIssue.body || '_No description provided._'}
-`;
-    }
-
-    // Add common sections
-    prompt += `
-## Guidance
-
-If \`forwardedMessage\` exists in the session file, incorporate that guidance
-into your approach before continuing.
-
-## Status Reporting
-
-**Report status at each phase transition** by updating the session file directly.
-
-**Session file location:** Read \`session-context.json\` in the worktree root to find the \`sessionFilePath\` field.
-
-| Phase | Status Value |
-|-------|--------------|
-| Starting | \`planning\` |
-| Plan complete | \`planning_complete\` |
-| Implementing | \`working\` |
-| Stuck | \`stuck\` (also set \`stuckReason\`) |
-| Complete | \`complete\` |
-
-**How to update status:**
-1. Read the session file (path from \`session-context.json\` → \`sessionFilePath\`)
-2. Update the \`status\` field to the new value
-3. Update \`lastHeartbeat\` to current ISO timestamp
-4. If stuck, also set \`stuckReason\` to explain what you need
-5. Write the updated JSON back to the session file
-
-**Note:** \`/ship\` automatically updates status to \`shipping\` → \`reviews_in_progress\` → \`complete\`.
-
-## Workflow
-
-### Phase 1: Planning
-1. **First:** Update session file with \`"status": "planning"\`
-2. Read and understand the issue requirements
-3. Explore the codebase to understand existing patterns
-4. Create a detailed implementation plan
-5. Write your plan to \`.claude/worker-plan.md\`
-6. **Then:** Update session file with \`"status": "planning_complete"\`
-
-### Message Check Protocol
-
-Check for forwarded messages at these points:
-1. **After each phase** - planning complete, before implementation, after tests
-2. **When stuck** - check every 5 minutes while waiting for guidance
-3. **Before major decisions** - architectural choices, security implementations
-
-**How to check:** Read the session file and check the \`forwardedMessage\` field.
-
-**If message exists:**
-1. Read and incorporate the guidance into your approach
-2. Clear the message by setting \`forwardedMessage\` to \`undefined\` (or remove the field)
-3. Continue with your work (the guidance may unstick you)
-
-**Important:** When your status is \`stuck\`, check for messages periodically - the orchestrator may have sent guidance that unblocks you.
-
-### Phase 3: Implementation
-1. **First:** Update session file with \`"status": "working"\`
-2. Follow your plan in \`.claude/worker-plan.md\`
-3. Build and test your changes
-4. Create PR via \`/ship\` (handles remaining status updates automatically)
-
-### Domain Gates
-If you encounter these, set status to \`stuck\` with a clear reason:
-- Auth/Security decisions
-- Performance-critical code
-- Breaking changes
-- Data migration
-
-**Example:** Update session file with \`"status": "stuck"\` and \`"stuckReason": "Need auth decision: should we use JWT or session tokens?"\`
-
-## Reference
-- Follow CLAUDE.md for coding standards
-- Build must pass before shipping
-- Tests must pass before shipping
-`;
-
-    // Add additional prompt sections from hooks
-    if (additionalPromptSections && additionalPromptSections.length > 0) {
-      prompt += '\n## Additional Instructions\n\n';
-      prompt += additionalPromptSections.join('\n\n');
-      prompt += '\n';
-    }
+    // Use the prompt builder to generate the prompt content
+    const prompt = this.promptBuilder.build({
+      githubOwner: this.config.githubOwner,
+      githubRepo: this.config.githubRepo,
+      issues,
+      branchName,
+      mode,
+      additionalSections: additionalPromptSections,
+    });
 
     await fs.promises.writeFile(promptPath, prompt, 'utf-8');
     return promptPath;
