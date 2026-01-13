@@ -1,0 +1,324 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import SessionView from './SessionView';
+
+const mockSession = {
+  id: '123',
+  repoId: 'test-repo',
+  issueNumber: 123,
+  issueTitle: 'Test Issue',
+  status: 'working',
+  mode: 'single',
+  branch: 'issue-123',
+  worktreePath: '/path/to/worktree',
+  startedAt: new Date().toISOString(),
+  lastHeartbeat: new Date().toISOString(),
+  worktreeStatus: {
+    filesChanged: 5,
+    insertions: 100,
+    deletions: 20,
+    lastCommitMessage: 'feat: add new feature',
+    changedFiles: ['file1.ts', 'file2.ts', 'file3.ts'],
+  },
+};
+
+function renderSessionView(repoId = 'test-repo', sessionId = '123') {
+  return render(
+    <MemoryRouter initialEntries={[`/session/${repoId}/${sessionId}`]}>
+      <Routes>
+        <Route path="/session/:repoId/:sessionId" element={<SessionView />} />
+        <Route path="/" element={<div>Dashboard</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+describe('SessionView', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('shows loading state initially', () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise(() => {}) // Never resolves
+    );
+
+    renderSessionView();
+
+    expect(screen.getByText('Loading...')).toBeInTheDocument();
+  });
+
+  it('shows 404 when session not found', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 404,
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Session not found/i)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Back to dashboard/i)).toBeInTheDocument();
+  });
+
+  it('shows session details when loaded', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ session: mockSession }),
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByText('test-repo #123')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Test Issue')).toBeInTheDocument();
+    expect(screen.getByText('issue-123')).toBeInTheDocument();
+    expect(screen.getByText('/path/to/worktree')).toBeInTheDocument();
+  });
+
+  it('shows git status when available', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ session: mockSession }),
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByText('+100')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('-20')).toBeInTheDocument();
+    expect(screen.getByText('5 files')).toBeInTheDocument();
+    expect(screen.getByText(/feat: add new feature/i)).toBeInTheDocument();
+    expect(screen.getByText('file1.ts')).toBeInTheDocument();
+  });
+
+  it('shows stuck reason when session is stuck', async () => {
+    const stuckSession = {
+      ...mockSession,
+      status: 'stuck',
+      stuckReason: 'Need auth decision',
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ session: stuckSession }),
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Stuck Reason')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Need auth decision')).toBeInTheDocument();
+  });
+
+  it('handles message forwarding', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string, options) => {
+      if (options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              session: { ...mockSession, forwardedMessage: 'Test message' },
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ session: mockSession }),
+      });
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByText('test-repo #123')).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText(/Enter guidance/i);
+    fireEvent.change(input, { target: { value: 'Test message' } });
+
+    const sendButton = screen.getByRole('button', { name: /Send/i });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        '/api/sessions/test-repo/123',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({ action: 'forward', message: 'Test message' }),
+        })
+      );
+    });
+  });
+
+  it('shows pending forwarded message', async () => {
+    const sessionWithMessage = {
+      ...mockSession,
+      forwardedMessage: 'Pending guidance',
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ session: sessionWithMessage }),
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Pending message:')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Pending guidance')).toBeInTheDocument();
+  });
+
+  it('handles pause action', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string, options) => {
+      if (options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              session: { ...mockSession, status: 'paused' },
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ session: mockSession }),
+      });
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Pause/i })).toBeInTheDocument();
+    });
+
+    const pauseButton = screen.getByRole('button', { name: /Pause/i });
+    fireEvent.click(pauseButton);
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        '/api/sessions/test-repo/123',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({ action: 'pause' }),
+        })
+      );
+    });
+  });
+
+  it('shows resume button when paused', async () => {
+    const pausedSession = {
+      ...mockSession,
+      status: 'paused',
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ session: pausedSession }),
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Resume/i })).toBeInTheDocument();
+    });
+  });
+
+  it('handles cancel action', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string, options) => {
+      if (options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              session: { ...mockSession, status: 'cancelled' },
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ session: mockSession }),
+      });
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
+    });
+
+    const cancelButton = screen.getByRole('button', { name: /Cancel/i });
+    fireEvent.click(cancelButton);
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        '/api/sessions/test-repo/123',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({ action: 'cancel' }),
+        })
+      );
+    });
+  });
+
+  it('shows Ralph status for ralph mode sessions', async () => {
+    const ralphSession = {
+      ...mockSession,
+      mode: 'ralph',
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (url.includes('/api/ralph')) {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ session: ralphSession }),
+      });
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Ralph')).toBeInTheDocument();
+    });
+
+    // RalphStatus component should render
+    expect(screen.getByText('Ralph Loop')).toBeInTheDocument();
+  });
+
+  it('shows pull request link when available', async () => {
+    const sessionWithPR = {
+      ...mockSession,
+      pullRequestUrl: 'https://github.com/owner/repo/pull/1',
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ session: sessionWithPR }),
+    });
+
+    renderSessionView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Pull Request')).toBeInTheDocument();
+    });
+
+    const link = screen.getByRole('link', { name: /github\.com/i });
+    expect(link).toHaveAttribute('href', 'https://github.com/owner/repo/pull/1');
+  });
+});
