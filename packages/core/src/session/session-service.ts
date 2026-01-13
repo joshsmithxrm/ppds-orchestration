@@ -363,6 +363,13 @@ export class SessionService {
 
     await this.store.save(updatedSession);
 
+    // Also write to worktree for worker to read
+    await this.store.writeSessionState(session.worktreePath, {
+      status: updatedSession.status,
+      forwardedMessage: message,
+      lastUpdated: now,
+    });
+
     return updatedSession;
   }
 
