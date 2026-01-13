@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { CentralConfig, RepoConfig, HookConfig, HookConfigInput, GlobalHooks } from './central-config.js';
+import { CentralConfig, RepoConfig, HookConfig, HookConfigInput } from './central-config.js';
 
 /**
  * Default location for central config file.

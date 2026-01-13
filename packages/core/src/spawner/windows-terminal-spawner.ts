@@ -213,7 +213,7 @@ Write-Host ''
 Write-Host '=================================================='
 Write-Host '  Worker stopped. Status: ' -NoNewline
 if ($session) { Write-Host $session.status -ForegroundColor Yellow } else { Write-Host 'unknown' -ForegroundColor Red }
-if ($session.stuckReason) {
+if ($session -and $session.stuckReason) {
     Write-Host "  Reason: $($session.stuckReason)" -ForegroundColor Cyan
 }
 Write-Host '  Review the output above, then press any key...'
