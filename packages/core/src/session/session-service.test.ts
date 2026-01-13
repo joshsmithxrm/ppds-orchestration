@@ -302,7 +302,9 @@ describe('SessionService', () => {
   });
 });
 
-describe('createSessionService', () => {
+// These tests only run on Windows because createSessionService uses createSpawner()
+// which is only implemented for Windows Terminal
+describe.skipIf(process.platform !== 'win32')('createSessionService', () => {
   let tempDir: string;
   let repoRoot: string;
 
