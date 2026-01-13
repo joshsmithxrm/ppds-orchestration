@@ -9,6 +9,8 @@ import {
   SessionListResult,
   WorktreeStatus,
   ExecutionMode,
+  IssueRef,
+  getIssueNumbers,
   STALE_THRESHOLD_MS,
 } from './types.js';
 import { SessionStore } from './session-store.js';
@@ -73,20 +75,33 @@ export class SessionService {
   }
 
   /**
-   * Spawns a new worker session for an issue.
+   * Spawns a new worker session for one or more issues.
+   * @param issueNumbers - Single issue number or array of issue numbers
+   * @param options - Spawn options
    */
-  async spawn(issueNumber: number, options?: SpawnOptions): Promise<SessionState> {
-    const sessionId = issueNumber.toString();
+  async spawn(issueNumbers: number | number[], options?: SpawnOptions): Promise<SessionState> {
+    // Normalize to array
+    const issueNums = Array.isArray(issueNumbers) ? issueNumbers : [issueNumbers];
+
+    if (issueNums.length === 0) {
+      throw new Error('At least one issue number is required');
+    }
+
+    const primaryIssue = issueNums[0];
+    const sessionId = primaryIssue.toString();
     const mode = options?.mode ?? 'single';
 
-    // Check if session already exists and is still active
-    if (this.store.exists(sessionId)) {
-      const existing = await this.store.load(sessionId);
-      if (existing && existing.status !== 'complete' && existing.status !== 'cancelled') {
-        throw new Error(`Session for issue #${issueNumber} already exists (status: ${existing.status})`);
+    // Check if any of these issues already have active sessions
+    for (const issueNum of issueNums) {
+      const existingId = issueNum.toString();
+      if (this.store.exists(existingId)) {
+        const existing = await this.store.load(existingId);
+        if (existing && existing.status !== 'complete' && existing.status !== 'cancelled') {
+          throw new Error(`Issue #${issueNum} already has an active session (status: ${existing.status})`);
+        }
+        // Session is complete/cancelled - allow re-spawn by deleting old session
+        await this.store.delete(existingId);
       }
-      // Session is complete/cancelled - allow re-spawn by deleting old session
-      await this.store.delete(sessionId);
     }
 
     // Check spawner availability
@@ -94,13 +109,28 @@ export class SessionService {
       throw new Error(`Worker spawner (${this.spawner.getName()}) is not available`);
     }
 
-    // Fetch issue from GitHub
-    const issueInfo = await this.fetchIssue(issueNumber);
+    // Fetch all issues from GitHub in parallel
+    const issueInfos = await Promise.all(
+      issueNums.map(async (num) => {
+        const info = await this.fetchIssue(num);
+        return { number: num, title: info.title, body: info.body };
+      })
+    );
 
-    // Create worktree
-    const worktreePrefix = this.config.worktreePrefix ?? `${path.basename(this.config.repoRoot)}-issue-`;
-    const worktreeName = `${worktreePrefix}${issueNumber}`;
-    const branchName = `issue-${issueNumber}`;
+    // Generate branch and worktree names based on issue count
+    const worktreePrefix = this.config.worktreePrefix ?? `${path.basename(this.config.repoRoot)}-`;
+    let branchName: string;
+    let worktreeName: string;
+
+    if (issueNums.length === 1) {
+      branchName = `issue-${primaryIssue}`;
+      worktreeName = `${worktreePrefix}issue-${primaryIssue}`;
+    } else {
+      const issuesSuffix = issueNums.join('-');
+      branchName = `issues-${issuesSuffix}`;
+      worktreeName = `${worktreePrefix}issues-${issuesSuffix}`;
+    }
+
     const worktreePath = path.join(path.dirname(this.config.repoRoot), worktreeName);
 
     await this.gitUtils.createWorktree(
@@ -112,9 +142,7 @@ export class SessionService {
     // Write worker prompt
     const promptPath = await this.writeWorkerPrompt(
       worktreePath,
-      issueNumber,
-      issueInfo.title,
-      issueInfo.body,
+      issueInfos,
       branchName,
       mode,
       options?.additionalPromptSections
@@ -125,8 +153,7 @@ export class SessionService {
     const sessionFilePath = this.store.getSessionFilePath(sessionId);
     const context: SessionContext = {
       sessionId,
-      issueNumber,
-      issueTitle: issueInfo.title,
+      issues: issueInfos,
       github: {
         owner: this.config.githubOwner,
         repo: this.config.githubRepo,
@@ -134,8 +161,8 @@ export class SessionService {
       branch: branchName,
       worktreePath,
       commands: {
-        update: `orch update --id ${issueNumber}`,
-        heartbeat: `orch heartbeat --id ${issueNumber}`,
+        update: `orch update --id ${primaryIssue}`,
+        heartbeat: `orch heartbeat --id ${primaryIssue}`,
       },
       spawnedAt: now,
       sessionFilePath,
@@ -145,8 +172,7 @@ export class SessionService {
     // Register session
     const session: SessionState = {
       id: sessionId,
-      issueNumber,
-      issueTitle: issueInfo.title,
+      issues: issueInfos,
       status: 'registered',
       mode,
       branch: branchName,
@@ -160,8 +186,7 @@ export class SessionService {
     // Spawn worker
     const spawnResult = await this.spawner.spawn({
       sessionId,
-      issueNumber,
-      issueTitle: issueInfo.title,
+      issues: issueInfos,
       workingDirectory: worktreePath,
       promptFilePath: promptPath,
       githubOwner: this.config.githubOwner,
@@ -187,16 +212,76 @@ export class SessionService {
   }
 
   /**
-   * Lists active sessions.
+   * Restarts a stuck session by spawning a fresh worker in the existing worktree.
+   * The worker will see any forwarded guidance and continue from the current state.
+   */
+  async restart(sessionId: string): Promise<SessionState> {
+    const session = await this.store.load(sessionId);
+
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found`);
+    }
+
+    if (session.status !== 'stuck') {
+      throw new Error(`Can only restart stuck sessions (current status: ${session.status})`);
+    }
+
+    // Check spawner availability
+    if (!this.spawner.isAvailable()) {
+      throw new Error(`Worker spawner (${this.spawner.getName()}) is not available`);
+    }
+
+    // Verify worktree still exists
+    if (!fs.existsSync(session.worktreePath)) {
+      throw new Error(`Worktree no longer exists at ${session.worktreePath}`);
+    }
+
+    // Re-read the prompt file path
+    const promptPath = path.join(session.worktreePath, '.claude', 'session-prompt.md');
+    if (!fs.existsSync(promptPath)) {
+      throw new Error(`Worker prompt not found at ${promptPath}`);
+    }
+
+    // Spawn a fresh worker in the existing worktree
+    const spawnResult = await this.spawner.spawn({
+      sessionId,
+      issues: session.issues,
+      workingDirectory: session.worktreePath,
+      promptFilePath: promptPath,
+      githubOwner: this.config.githubOwner,
+      githubRepo: this.config.githubRepo,
+    });
+
+    if (!spawnResult.success) {
+      throw new Error(spawnResult.error ?? 'Failed to restart worker');
+    }
+
+    // Update status back to working
+    const updatedSession: SessionState = {
+      ...session,
+      status: 'working',
+      stuckReason: undefined, // Clear the stuck reason
+      lastHeartbeat: new Date().toISOString(),
+    };
+    await this.store.save(updatedSession);
+
+    return updatedSession;
+  }
+
+  /**
+   * Lists all sessions (including completed).
    */
   async list(): Promise<SessionState[]> {
-    const sessions = await this.store.listActive();
+    const sessions = await this.store.listAll();
 
     // Clean up orphaned sessions (worktrees that no longer exist)
     const validSessions: SessionState[] = [];
 
     for (const session of sessions) {
-      if (fs.existsSync(session.worktreePath)) {
+      // For completed/cancelled sessions, keep them even if worktree is gone
+      if (session.status === 'complete' || session.status === 'cancelled') {
+        validSessions.push(session);
+      } else if (fs.existsSync(session.worktreePath)) {
         validSessions.push(session);
       } else {
         // Worktree was removed externally, clean up session
@@ -208,20 +293,31 @@ export class SessionService {
   }
 
   /**
+   * Lists only running sessions (excludes complete/cancelled).
+   */
+  async listRunning(): Promise<SessionState[]> {
+    const allSessions = await this.list();
+    return allSessions.filter(s => s.status !== 'complete' && s.status !== 'cancelled');
+  }
+
+  /**
    * Lists sessions with cleanup info.
    */
   async listWithCleanupInfo(): Promise<SessionListResult> {
-    const sessions = await this.store.listActive();
+    const sessions = await this.store.listAll();
     const validSessions: SessionState[] = [];
     const cleanedIssueNumbers: number[] = [];
 
     for (const session of sessions) {
-      if (fs.existsSync(session.worktreePath)) {
+      // For completed/cancelled sessions, keep them even if worktree is gone
+      if (session.status === 'complete' || session.status === 'cancelled') {
+        validSessions.push(session);
+      } else if (fs.existsSync(session.worktreePath)) {
         validSessions.push(session);
       } else {
         // Worktree was removed externally, clean up session
         await this.store.delete(session.id);
-        cleanedIssueNumbers.push(session.issueNumber);
+        cleanedIssueNumbers.push(...getIssueNumbers(session));
       }
     }
 
@@ -281,6 +377,14 @@ export class SessionService {
       throw new Error(`Session '${sessionId}' not found`);
     }
 
+    // Cannot pause completed or cancelled sessions
+    if (session.status === 'complete') {
+      throw new Error('Cannot pause a completed session');
+    }
+    if (session.status === 'cancelled') {
+      throw new Error('Cannot pause a cancelled session');
+    }
+
     if (session.status === 'paused') {
       return session; // Already paused
     }
@@ -315,6 +419,11 @@ export class SessionService {
       throw new Error(`Session '${sessionId}' not found`);
     }
 
+    // Cannot cancel completed sessions
+    if (session.status === 'complete') {
+      throw new Error('Cannot cancel a completed session');
+    }
+
     // Skip intermediate 'cancelled' status update - delete directly to avoid
     // race condition where watcher broadcasts 'cancelled' before deletion
 
@@ -328,10 +437,29 @@ export class SessionService {
   }
 
   /**
+   * Deletes a session (for removing completed sessions from the list).
+   */
+  async delete(sessionId: string, options?: { keepWorktree?: boolean }): Promise<void> {
+    const session = await this.store.load(sessionId);
+
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found`);
+    }
+
+    // Remove worktree if it exists and keepWorktree is not true
+    if (!options?.keepWorktree && fs.existsSync(session.worktreePath)) {
+      await this.gitUtils.removeWorktree(session.worktreePath);
+    }
+
+    // Remove session file
+    await this.store.delete(sessionId);
+  }
+
+  /**
    * Cancels all active sessions.
    */
   async cancelAll(options?: { keepWorktrees?: boolean }): Promise<number> {
-    const sessions = await this.list();
+    const sessions = await this.listRunning();
     let count = 0;
 
     for (const session of sessions) {
@@ -352,6 +480,14 @@ export class SessionService {
 
     if (!session) {
       throw new Error(`Session '${sessionId}' not found`);
+    }
+
+    // Cannot forward to completed or cancelled sessions
+    if (session.status === 'complete') {
+      throw new Error('Cannot forward message to a completed session');
+    }
+    if (session.status === 'cancelled') {
+      throw new Error('Cannot forward message to a cancelled session');
     }
 
     const now = new Date().toISOString();
@@ -504,9 +640,7 @@ export class SessionService {
    */
   private async writeWorkerPrompt(
     worktreePath: string,
-    issueNumber: number,
-    title: string,
-    body: string,
+    issues: IssueRef[],
     branchName: string,
     mode: ExecutionMode = 'single',
     additionalPromptSections?: string[]
@@ -518,27 +652,81 @@ export class SessionService {
     }
 
     const promptPath = path.join(claudeDir, 'session-prompt.md');
-    const cli = this.config.cliCommand ?? 'orch';
-    let prompt = `# Session: Issue #${issueNumber}
+    const primaryIssue = issues[0];
+    const issueNumbers = issues.map(i => i.number);
+    const isMultiIssue = issues.length > 1;
+
+    // Build the header based on single vs multi-issue
+    let prompt: string;
+    if (isMultiIssue) {
+      prompt = `# Session: Issues ${issueNumbers.map(n => `#${n}`).join(', ')}
 
 ## Repository Context
 
 **IMPORTANT:** For all GitHub operations (CLI and MCP tools), use these values:
 - Owner: \`${this.config.githubOwner}\`
 - Repo: \`${this.config.githubRepo}\`
-- Issue: \`#${issueNumber}\`
+- Issues: ${issueNumbers.map(n => `\`#${n}\``).join(', ')}
 - Branch: \`${branchName}\`
 
 Examples:
 \`\`\`bash
-gh issue view ${issueNumber} --repo ${this.config.githubOwner}/${this.config.githubRepo}
+gh issue view ${primaryIssue.number} --repo ${this.config.githubOwner}/${this.config.githubRepo}
+gh pr create --repo ${this.config.githubOwner}/${this.config.githubRepo} ...
+\`\`\`
+
+## Issues
+
+${issues.map(issue => `### Issue #${issue.number}: ${issue.title}
+
+${issue.body || '_No description provided._'}
+`).join('\n')}
+
+## Combined Implementation
+
+You are implementing **${issues.length} related issues** in a single PR.
+
+**Approach:**
+1. Plan how these issues relate to each other
+2. Identify shared components or dependencies
+3. Implement in a logical order
+4. Create ONE PR that addresses all issues
+
+**PR Requirements:**
+- Title should reference the primary issue or summarize all
+- Body should have sections for each issue addressed
+- Use \`Closes ${issueNumbers.map(n => `#${n}`).join(', Closes ')}\` to auto-close all issues
+`;
+    } else {
+      prompt = `# Session: Issue #${primaryIssue.number}
+
+## Repository Context
+
+**IMPORTANT:** For all GitHub operations (CLI and MCP tools), use these values:
+- Owner: \`${this.config.githubOwner}\`
+- Repo: \`${this.config.githubRepo}\`
+- Issue: \`#${primaryIssue.number}\`
+- Branch: \`${branchName}\`
+
+Examples:
+\`\`\`bash
+gh issue view ${primaryIssue.number} --repo ${this.config.githubOwner}/${this.config.githubRepo}
 gh pr create --repo ${this.config.githubOwner}/${this.config.githubRepo} ...
 \`\`\`
 
 ## Issue
-**${title}**
+**${primaryIssue.title}**
 
-${body}
+${primaryIssue.body || '_No description provided._'}
+`;
+    }
+
+    // Add common sections
+    prompt += `
+## Guidance
+
+If \`forwardedMessage\` exists in the session file, incorporate that guidance
+into your approach before continuing.
 
 ## Status Reporting
 

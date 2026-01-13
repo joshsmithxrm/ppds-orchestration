@@ -12,6 +12,8 @@ import { heartbeatCommand } from './commands/heartbeat.js';
 import { ackCommand } from './commands/ack.js';
 import { pauseCommand } from './commands/pause.js';
 import { resumeCommand } from './commands/resume.js';
+import { restartCommand } from './commands/restart.js';
+import { deleteCommand } from './commands/delete.js';
 import { dashboardCommand } from './commands/dashboard.js';
 
 const program = new Command();
@@ -37,12 +39,12 @@ program
   .description('Orchestration CLI for parallel Claude Code workers')
   .version('0.1.0');
 
-// spawn command
+// spawn command - accepts one or more issue numbers
 program
-  .command('spawn <issue>')
-  .description('Spawn a new worker for a GitHub issue')
-  .action(withErrorHandling(async (issue: string) => {
-    await spawnCommand(parseInt(issue, 10));
+  .command('spawn <issues...>')
+  .description('Spawn a new worker for GitHub issue(s)')
+  .action(withErrorHandling(async (issues: string[]) => {
+    await spawnCommand(issues.map(i => parseInt(i, 10)));
   }));
 
 // list command
@@ -123,6 +125,19 @@ program
   .command('resume <session>')
   .description('Resume a paused session')
   .action(withErrorHandling(resumeCommand));
+
+// restart command
+program
+  .command('restart <session>')
+  .description('Restart a stuck session with a fresh worker')
+  .action(withErrorHandling(restartCommand));
+
+// delete command
+program
+  .command('delete <session>')
+  .description('Delete a session from the list')
+  .option('--keep-worktree', 'Keep the worktree')
+  .action(withErrorHandling(deleteCommand));
 
 // dashboard command
 program

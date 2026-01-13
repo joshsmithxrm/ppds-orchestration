@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { SessionWatcher, SessionWatcherCallback } from './session-watcher.js';
-import { SessionState } from '../session/types.js';
+import { SessionState, IssueRef } from '../session/types.js';
 
 describe('SessionWatcher', () => {
   let tempDir: string;
@@ -23,6 +23,23 @@ describe('SessionWatcher', () => {
     }
     // Clean up temp directory
     fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const createTestIssue = (number: number): IssueRef => ({
+    number,
+    title: `Test issue #${number}`,
+    body: `Description for issue #${number}`,
+  });
+
+  const createTestSession = (id: string, issueNumbers: number[]): SessionState => ({
+    id,
+    issues: issueNumbers.map(createTestIssue),
+    status: 'working',
+    mode: 'single',
+    branch: issueNumbers.length === 1 ? `issue-${issueNumbers[0]}` : `issues-${issueNumbers.join('-')}`,
+    worktreePath: '/tmp/test',
+    startedAt: new Date().toISOString(),
+    lastHeartbeat: new Date().toISOString(),
   });
 
   describe('constructor', () => {
@@ -50,16 +67,7 @@ describe('SessionWatcher', () => {
     it('should emit add events for existing files', async () => {
       // Pre-create sessions directory and file
       fs.mkdirSync(sessionsDir, { recursive: true });
-      const session: SessionState = {
-        id: '42',
-        issueNumber: 42,
-        issueTitle: 'Test issue',
-        status: 'working',
-        branch: 'issue-42',
-        worktreePath: '/tmp/test',
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('42', [42]);
       fs.writeFileSync(
         path.join(sessionsDir, 'work-42.json'),
         JSON.stringify(session)
@@ -99,16 +107,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Create initial session file
-      const session: SessionState = {
-        id: '123',
-        issueNumber: 123,
-        issueTitle: 'Test issue',
-        status: 'working',
-        branch: 'issue-123',
-        worktreePath: '/tmp/test',
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('123', [123]);
       const filePath = path.join(sessionsDir, 'work-123.json');
       fs.writeFileSync(filePath, JSON.stringify(session));
 
@@ -136,16 +135,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Create session file
-      const session: SessionState = {
-        id: '456',
-        issueNumber: 456,
-        issueTitle: 'Test issue',
-        status: 'working',
-        branch: 'issue-456',
-        worktreePath: '/tmp/test',
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('456', [456]);
       const filePath = path.join(sessionsDir, 'work-456.json');
       fs.writeFileSync(filePath, JSON.stringify(session));
 
@@ -211,16 +201,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Create session file
-      const session: SessionState = {
-        id: '100',
-        issueNumber: 100,
-        issueTitle: 'Test',
-        status: 'working',
-        branch: 'issue-100',
-        worktreePath: '/tmp/test',
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('100', [100]);
       fs.writeFileSync(
         path.join(sessionsDir, 'work-100.json'),
         JSON.stringify(session)
@@ -242,16 +223,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Create session file
-      const session: SessionState = {
-        id: '200',
-        issueNumber: 200,
-        issueTitle: 'Test',
-        status: 'working',
-        branch: 'issue-200',
-        worktreePath: '/tmp/test',
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('200', [200]);
       fs.writeFileSync(
         path.join(sessionsDir, 'work-200.json'),
         JSON.stringify(session)
@@ -276,16 +248,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Create session file
-      const session: SessionState = {
-        id: '300',
-        issueNumber: 300,
-        issueTitle: 'Test',
-        status: 'working',
-        branch: 'issue-300',
-        worktreePath: '/tmp/test',
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('300', [300]);
       fs.writeFileSync(
         path.join(sessionsDir, 'work-300.json'),
         JSON.stringify(session)
@@ -308,19 +271,10 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Test numeric ID
-      const session1: SessionState = {
-        id: '123',
-        issueNumber: 123,
-        issueTitle: 'Test',
-        status: 'working',
-        branch: 'issue-123',
-        worktreePath: '/tmp/test',
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('123', [123]);
       fs.writeFileSync(
         path.join(sessionsDir, 'work-123.json'),
-        JSON.stringify(session1)
+        JSON.stringify(session)
       );
 
       await new Promise((resolve) => setTimeout(resolve, 300));

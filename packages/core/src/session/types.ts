@@ -29,6 +29,22 @@ export const SessionStatus = z.enum([
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
 /**
+ * Reference to a GitHub issue.
+ */
+export const IssueRef = z.object({
+  /** GitHub issue number. */
+  number: z.number(),
+
+  /** Issue title from GitHub. */
+  title: z.string(),
+
+  /** Issue body/description (optional, used for prompt generation). */
+  body: z.string().optional(),
+});
+
+export type IssueRef = z.infer<typeof IssueRef>;
+
+/**
  * Git worktree status information.
  */
 export const WorktreeStatus = z.object({
@@ -48,14 +64,11 @@ export type WorktreeStatus = z.infer<typeof WorktreeStatus>;
  * This is the orchestrator's view of the session, stored in ~/.orchestration/{project}/sessions/.
  */
 export const SessionState = z.object({
-  /** Unique session identifier (typically the issue number as string). */
+  /** Unique session identifier (primary issue number as string, or UUID for workflows). */
   id: z.string(),
 
-  /** GitHub issue number this session is working on. */
-  issueNumber: z.number(),
-
-  /** Issue title from GitHub. */
-  issueTitle: z.string(),
+  /** All GitHub issues this session is working on. First issue is the primary. */
+  issues: z.array(IssueRef).min(1),
 
   /** Current session status. */
   status: SessionStatus,
@@ -86,9 +99,29 @@ export const SessionState = z.object({
 
   /** Git status summary for the worktree. */
   worktreeStatus: WorktreeStatus.optional(),
+
+  /** Workflow ID if this session is part of a workflow (future use). */
+  workflowId: z.string().optional(),
+
+  /** Stage ID within the workflow (future use). */
+  stageId: z.string().optional(),
 });
 
 export type SessionState = z.infer<typeof SessionState>;
+
+/**
+ * Helper to get the primary issue from a session.
+ */
+export function getPrimaryIssue(session: SessionState): IssueRef {
+  return session.issues[0];
+}
+
+/**
+ * Helper to get all issue numbers from a session.
+ */
+export function getIssueNumbers(session: SessionState): number[] {
+  return session.issues.map(i => i.number);
+}
 
 /**
  * Static context written to the worktree at spawn time.
@@ -98,11 +131,8 @@ export const SessionContext = z.object({
   /** Unique session identifier. */
   sessionId: z.string(),
 
-  /** GitHub issue number. */
-  issueNumber: z.number(),
-
-  /** Issue title. */
-  issueTitle: z.string(),
+  /** All GitHub issues this session is working on. */
+  issues: z.array(IssueRef).min(1),
 
   /** GitHub repository info. */
   github: z.object({
@@ -153,8 +183,7 @@ export type SessionDynamicState = z.infer<typeof SessionDynamicState>;
  */
 export interface WorkerSpawnRequest {
   sessionId: string;
-  issueNumber: number;
-  issueTitle: string;
+  issues: IssueRef[];
   workingDirectory: string;
   promptFilePath: string;
   githubOwner: string;

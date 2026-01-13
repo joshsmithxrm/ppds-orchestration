@@ -11,7 +11,7 @@ const STATUS_ICONS: Record<string, string> = {
   pr_ready: '[+]',
   stuck: '[!]',
   paused: '[||]',
-  complete: '[✓]',
+  complete: '[\u2713]',
   cancelled: '[x]',
 };
 
@@ -25,8 +25,8 @@ const STATUS_COLORS: Record<string, (s: string) => string> = {
   pr_ready: chalk.greenBright,
   stuck: chalk.red,
   paused: chalk.yellow,
-  complete: chalk.green,
-  cancelled: chalk.gray,
+  complete: chalk.dim,
+  cancelled: chalk.dim,
 };
 
 function getElapsedTime(startedAt: string): string {
@@ -48,15 +48,34 @@ function isStale(session: SessionState): boolean {
   return Date.now() - lastHeartbeat > STALE_THRESHOLD_MS;
 }
 
+function formatIssues(session: SessionState): string {
+  if (session.issues.length === 1) {
+    return `#${session.issues[0].number}`;
+  }
+  return session.issues.map(i => `#${i.number}`).join(', ');
+}
+
+function formatTitle(session: SessionState): string {
+  if (session.issues.length === 1) {
+    return session.issues[0].title;
+  }
+  return `${session.issues.length} issues`;
+}
+
 function formatSession(session: SessionState): string {
+  const isCompleted = session.status === 'complete' || session.status === 'cancelled';
+  const colorFn = isCompleted ? chalk.dim : (s: string) => s;
+
   const icon = isStale(session) && session.status === 'working'
     ? chalk.yellow('[?]')
     : STATUS_COLORS[session.status]?.(STATUS_ICONS[session.status] ?? '[ ]') ?? '[ ]';
 
   const status = session.status.toUpperCase().replace('_', ' ');
   const elapsed = getElapsedTime(session.startedAt);
+  const issues = formatIssues(session);
+  const title = formatTitle(session);
 
-  let line = `${icon} #${session.issueNumber} - ${STATUS_COLORS[session.status]?.(status) ?? status} (${elapsed}) - ${session.issueTitle}`;
+  let line = colorFn(`${icon} ${issues} - ${STATUS_COLORS[session.status]?.(status) ?? status} (${elapsed}) - ${title}`);
 
   if (session.stuckReason) {
     line += `\n    ${chalk.red('Reason:')} ${session.stuckReason}`;
@@ -66,14 +85,21 @@ function formatSession(session: SessionState): string {
     line += `\n    ${chalk.blue('PR:')} ${session.pullRequestUrl}`;
   }
 
-  line += `\n    Branch: ${session.branch}, Worktree: ${session.worktreePath}`;
+  line += colorFn(`\n    Branch: ${session.branch}, Worktree: ${session.worktreePath}`);
 
   return line;
 }
 
 export async function listCommand(options: { all?: boolean; json?: boolean }): Promise<void> {
   const service = await createSessionService();
+
+  // By default, show all sessions including completed
+  // Use --active to filter to only running sessions
   const sessions = await service.list();
+
+  // Filter based on options (--all is deprecated, keeping for backward compat)
+  // Now we show all by default, so --all does nothing
+  // Could add --active flag to show only running
 
   if (options.json) {
     console.log(JSON.stringify(sessions, null, 2));
@@ -81,18 +107,32 @@ export async function listCommand(options: { all?: boolean; json?: boolean }): P
   }
 
   if (sessions.length === 0) {
-    console.log(chalk.gray('No active sessions'));
+    console.log(chalk.gray('No sessions'));
     return;
   }
 
-  console.log(chalk.bold(`Active Sessions (${sessions.length}):\n`));
+  // Separate running and completed sessions
+  const running = sessions.filter(s => s.status !== 'complete' && s.status !== 'cancelled');
+  const completed = sessions.filter(s => s.status === 'complete' || s.status === 'cancelled');
 
-  for (const session of sessions) {
-    console.log(formatSession(session));
-    console.log();
+  if (running.length > 0) {
+    console.log(chalk.bold(`Active Sessions (${running.length}):\n`));
+    for (const session of running) {
+      console.log(formatSession(session));
+      console.log();
+    }
+  }
+
+  if (completed.length > 0) {
+    console.log(chalk.dim(`\nCompleted Sessions (${completed.length}):\n`));
+    for (const session of completed) {
+      console.log(formatSession(session));
+      console.log();
+    }
   }
 
   // Legend
   console.log(chalk.gray('Icons: [ ] registered, [~] planning, [P] plan ready, [*] working'));
   console.log(chalk.gray('       [!] stuck, [||] paused, [+] PR ready, [?] stale'));
+  console.log(chalk.gray('       [\u2713] complete, [x] cancelled'));
 }

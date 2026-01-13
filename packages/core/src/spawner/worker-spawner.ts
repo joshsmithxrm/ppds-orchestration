@@ -34,8 +34,8 @@ export interface SpawnInfo {
   spawnId: string;
   /** When the worker was spawned. */
   spawnedAt: string;
-  /** Issue number this worker is handling. */
-  issueNumber: number;
+  /** Issue numbers this worker is handling. */
+  issueNumbers: number[];
   /** Ralph iteration number (1-indexed, only for ralph mode). */
   iteration?: number;
 }

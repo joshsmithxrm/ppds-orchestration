@@ -1,5 +1,9 @@
 import chalk from 'chalk';
-import { createSessionService } from '@ppds-orchestration/core';
+import { createSessionService, SessionState } from '@ppds-orchestration/core';
+
+function formatIssues(session: SessionState): string {
+  return session.issues.map(i => `#${i.number}`).join(', ');
+}
 
 export async function pauseCommand(sessionId: string): Promise<void> {
   const service = await createSessionService();
@@ -11,10 +15,10 @@ export async function pauseCommand(sessionId: string): Promise<void> {
   }
 
   if (before.status === 'paused') {
-    console.log(chalk.dim(`Session #${before.issueNumber} is already paused`));
+    console.log(chalk.dim(`Session ${formatIssues(before)} is already paused`));
     return;
   }
 
   const session = await service.pause(sessionId);
-  console.log(chalk.yellow(`⏸ Paused session #${session.issueNumber}`));
+  console.log(chalk.yellow(`\u23F8 Paused session ${formatIssues(session)}`));
 }

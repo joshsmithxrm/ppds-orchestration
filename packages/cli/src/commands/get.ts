@@ -20,8 +20,23 @@ export async function getCommand(sessionId: string, options: { json?: boolean })
   const worktreeStatus = await service.getWorktreeStatus(sessionId);
 
   // Format output
-  console.log(chalk.bold(`Session #${session.issueNumber}: ${session.issueTitle}`));
+  const primaryIssue = session.issues[0];
+  const issueDisplay = session.issues.length === 1
+    ? `#${primaryIssue.number}: ${primaryIssue.title}`
+    : `Issues ${session.issues.map(i => `#${i.number}`).join(', ')}`;
+
+  console.log(chalk.bold(`Session ${issueDisplay}`));
   console.log();
+
+  // Show all issues if multi-issue
+  if (session.issues.length > 1) {
+    console.log(chalk.bold('  Issues:'));
+    for (const issue of session.issues) {
+      console.log(`    #${issue.number}: ${issue.title}`);
+    }
+    console.log();
+  }
+
   console.log(`  Status:      ${formatStatus(session.status)}`);
   console.log(`  Branch:      ${chalk.cyan(session.branch)}`);
   console.log(`  Worktree:    ${session.worktreePath}`);
