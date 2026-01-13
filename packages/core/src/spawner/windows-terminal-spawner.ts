@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
@@ -18,33 +18,41 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
 
   /**
    * Checks if Windows Terminal is available.
+   * Uses fs.existsSync and 'where' command to avoid opening windows.
    */
   isAvailable(): boolean {
     if (this.wtPath !== null) {
       return true;
     }
 
-    // Check common Windows Terminal locations
-    const possiblePaths = [
-      'wt.exe', // In PATH
-      path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps', 'wt.exe'),
-    ];
+    // Check if wt.exe exists in WindowsApps
+    const windowsAppsPath = path.join(
+      process.env.LOCALAPPDATA || '',
+      'Microsoft',
+      'WindowsApps',
+      'wt.exe'
+    );
 
-    for (const wtPath of possiblePaths) {
-      try {
-        // Try to execute wt --version to see if it works
-        const result = spawn(wtPath, ['--version'], { stdio: 'ignore' });
-        result.on('error', () => {}); // Ignore errors
-        this.wtPath = wtPath;
-        return true;
-      } catch {
-        // Continue to next path
-      }
+    if (fs.existsSync(windowsAppsPath)) {
+      this.wtPath = windowsAppsPath;
+      return true;
     }
 
-    // Fallback: assume wt is in PATH
-    this.wtPath = 'wt.exe';
-    return process.platform === 'win32';
+    // Check if wt.exe is in PATH using 'where' command (doesn't open windows)
+    try {
+      const result = spawnSync('where', ['wt.exe'], {
+        stdio: 'pipe',
+        windowsHide: true,
+      });
+      if (result.status === 0) {
+        this.wtPath = 'wt.exe';
+        return true;
+      }
+    } catch {
+      // Ignore errors
+    }
+
+    return false;
   }
 
   /**

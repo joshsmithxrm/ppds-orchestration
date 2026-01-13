@@ -117,8 +117,15 @@ export type DashboardConfig = z.infer<typeof DashboardConfig>;
  * Sound effect configuration (optional).
  */
 export const SoundsConfig = z.object({
+  /** Whether sounds are enabled (default: true) */
+  enabled: z.boolean().default(true),
+  /** Base directory for sound files (served via /api/sounds) */
+  soundsDir: z.string().optional(),
+  /** Sound URL for worker spawn events */
   onSpawn: z.string().optional(),
+  /** Sound URL for worker stuck events */
   onStuck: z.string().optional(),
+  /** Sound URL for worker complete events */
   onComplete: z.string().optional(),
 }).optional();
 
