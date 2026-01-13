@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { SessionService, SessionServiceConfig } from './session-service.js';
+import { SessionService, SessionServiceConfig, createSessionService } from './session-service.js';
 import { SessionState } from './types.js';
+import { SessionStore } from './session-store.js';
 
 // Mock worker spawner that doesn't actually spawn terminals
 const mockSpawner = {
@@ -298,5 +299,99 @@ describe('SessionService', () => {
 
       expect(service.isStale(session)).toBe(false);
     });
+  });
+});
+
+describe('createSessionService', () => {
+  let tempDir: string;
+  let repoRoot: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-config-test-'));
+    repoRoot = path.join(tempDir, 'repo');
+    fs.mkdirSync(repoRoot, { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, '.git'), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('should correctly extract baseDir from sessionsDir config', async () => {
+    // This tests the fix for the path duplication bug
+    // Config has sessionsDir like ~/.orchestration/{project}/sessions
+    // We need to extract just ~/.orchestration as baseDir
+    const orchestrationRoot = path.join(tempDir, '.orchestration');
+    const projectName = 'test-project';
+    const fullSessionsDir = path.join(orchestrationRoot, projectName, 'sessions');
+
+    // Create config file with sessionsDir specified
+    const config = {
+      version: '1.0',
+      project: {
+        github: {
+          owner: 'test-owner',
+          repo: projectName,
+        },
+      },
+      dashboard: {
+        sessionsDir: fullSessionsDir,
+      },
+    };
+
+    fs.writeFileSync(
+      path.join(repoRoot, 'orchestration.config.json'),
+      JSON.stringify(config, null, 2)
+    );
+
+    // Change to repo directory for createSessionService
+    const originalCwd = process.cwd();
+    process.chdir(repoRoot);
+
+    try {
+      const service = await createSessionService();
+      const sessionsDir = service.getSessionsDir();
+
+      // The sessions dir should be exactly fullSessionsDir, not doubled
+      expect(sessionsDir).toBe(fullSessionsDir);
+      // It should NOT contain the project name twice
+      expect(sessionsDir).not.toContain(`${projectName}${path.sep}sessions${path.sep}${projectName}`);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  it('should use default baseDir when sessionsDir not specified', async () => {
+    const projectName = 'test-project';
+
+    // Create config file without sessionsDir
+    const config = {
+      version: '1.0',
+      project: {
+        github: {
+          owner: 'test-owner',
+          repo: projectName,
+        },
+      },
+    };
+
+    fs.writeFileSync(
+      path.join(repoRoot, 'orchestration.config.json'),
+      JSON.stringify(config, null, 2)
+    );
+
+    const originalCwd = process.cwd();
+    process.chdir(repoRoot);
+
+    try {
+      const service = await createSessionService();
+      const sessionsDir = service.getSessionsDir();
+
+      // Should use default ~/.orchestration/{project}/sessions
+      const expectedDir = path.join(os.homedir(), '.orchestration', projectName, 'sessions');
+      expect(sessionsDir).toBe(expectedDir);
+    } finally {
+      process.chdir(originalCwd);
+    }
   });
 });
