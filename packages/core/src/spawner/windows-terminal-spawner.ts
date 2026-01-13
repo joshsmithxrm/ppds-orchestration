@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { WorkerSpawner } from './worker-spawner.js';
+import * as crypto from 'node:crypto';
+import { WorkerSpawner, SpawnResult, SpawnInfo } from './worker-spawner.js';
 import { WorkerSpawnRequest } from '../session/types.js';
 
 /**
@@ -17,74 +18,215 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
 
   /**
    * Checks if Windows Terminal is available.
+   * Uses fs.existsSync and 'where' command to avoid opening windows.
    */
   isAvailable(): boolean {
     if (this.wtPath !== null) {
       return true;
     }
 
-    // Check common Windows Terminal locations
-    const possiblePaths = [
-      'wt.exe', // In PATH
-      path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps', 'wt.exe'),
-    ];
+    // Check if wt.exe exists in WindowsApps
+    const windowsAppsPath = path.join(
+      process.env.LOCALAPPDATA || '',
+      'Microsoft',
+      'WindowsApps',
+      'wt.exe'
+    );
 
-    for (const wtPath of possiblePaths) {
-      try {
-        // Try to execute wt --version to see if it works
-        const result = spawn(wtPath, ['--version'], { stdio: 'ignore' });
-        result.on('error', () => {}); // Ignore errors
-        this.wtPath = wtPath;
-        return true;
-      } catch {
-        // Continue to next path
-      }
+    if (fs.existsSync(windowsAppsPath)) {
+      this.wtPath = windowsAppsPath;
+      return true;
     }
 
-    // Fallback: assume wt is in PATH
-    this.wtPath = 'wt.exe';
-    return process.platform === 'win32';
+    // Check if wt.exe is in PATH using 'where' command (doesn't open windows)
+    try {
+      const result = spawnSync('where', ['wt.exe'], {
+        stdio: 'pipe',
+        windowsHide: true,
+      });
+      if (result.status === 0) {
+        this.wtPath = 'wt.exe';
+        return true;
+      }
+    } catch {
+      // Ignore errors
+    }
+
+    return false;
   }
 
   /**
    * Spawns a Claude Code worker in a new Windows Terminal tab.
    */
-  async spawn(request: WorkerSpawnRequest): Promise<void> {
+  async spawn(request: WorkerSpawnRequest): Promise<SpawnResult> {
+    const spawnId = crypto.randomUUID();
+    const spawnedAt = new Date().toISOString();
+
     if (!this.isAvailable()) {
-      throw new Error('Windows Terminal is not available');
+      return {
+        success: false,
+        spawnId,
+        spawnedAt,
+        error: 'Windows Terminal is not available',
+      };
     }
+
+    // Write spawn info to worktree for tracking
+    const spawnInfo: SpawnInfo = {
+      spawnId,
+      spawnedAt,
+      issueNumber: request.issueNumber,
+    };
+    await this.writeSpawnInfo(request.workingDirectory, spawnInfo);
 
     const tabTitle = `Issue #${request.issueNumber}`;
 
-    // Build the command to run in the new tab
-    // We use claude with the --resume flag to start with the session prompt
+    // Build the Claude command
     const claudeCommand = this.buildClaudeCommand(request);
 
+    // Write wrapper script and build command to execute it
+    const wrapperScriptPath = await this.writeWrapperScript(request.workingDirectory, claudeCommand);
+    const wrapperCommand = `powershell -NoProfile -ExecutionPolicy Bypass -File "${wrapperScriptPath}"`;
+
     // Windows Terminal command to open a new tab
+    // Use cmd /c with wrapper - wrapper decides whether to close or stay open
     const args = [
       'new-tab',
       '--title', tabTitle,
       '--startingDirectory', request.workingDirectory,
-      '--', // Separator for the command
-      'cmd', '/k', claudeCommand,
+      'cmd', '/c', wrapperCommand,
     ];
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const proc = spawn(this.wtPath || 'wt.exe', args, {
         detached: true,
         stdio: 'ignore',
       });
 
       proc.on('error', (error) => {
-        reject(new Error(`Failed to spawn Windows Terminal: ${error.message}`));
+        resolve({
+          success: false,
+          spawnId,
+          spawnedAt,
+          error: `Failed to spawn Windows Terminal: ${error.message}`,
+        });
       });
 
       // Don't wait for the process - it's detached
       proc.unref();
 
       // Give it a moment to start
-      setTimeout(resolve, 500);
+      setTimeout(() => {
+        resolve({
+          success: true,
+          spawnId,
+          spawnedAt,
+        });
+      }, 500);
     });
+  }
+
+  /**
+   * Writes spawn info to the worktree for tracking.
+   */
+  private async writeSpawnInfo(workingDirectory: string, info: SpawnInfo): Promise<void> {
+    const claudeDir = path.join(workingDirectory, '.claude');
+    if (!fs.existsSync(claudeDir)) {
+      fs.mkdirSync(claudeDir, { recursive: true });
+    }
+    const infoPath = path.join(claudeDir, 'spawn-info.json');
+    await fs.promises.writeFile(infoPath, JSON.stringify(info, null, 2), 'utf-8');
+  }
+
+  /**
+   * Writes a PowerShell wrapper script that manages Claude's lifecycle.
+   * - Runs Claude as a child process with visible output
+   * - Polls session status and terminates Claude cleanly on complete/cancelled
+   * - Exits with code 0 to allow Windows Terminal to close the tab
+   */
+  private async writeWrapperScript(worktreePath: string, claudeCommand: string): Promise<string> {
+    const scriptPath = path.join(worktreePath, '.claude', 'worker-wrapper.ps1');
+
+    const script = `# Worker Wrapper Script - Auto-generated by orchestrator
+# Manages Claude lifecycle based on session status
+
+$ErrorActionPreference = 'SilentlyContinue'
+
+# Get session file path from context
+$ctx = Get-Content 'session-context.json' -Raw | ConvertFrom-Json
+$sessionPath = $ctx.sessionFilePath
+
+if (-not $sessionPath) {
+    Write-Host 'ERROR: No sessionFilePath in session-context.json'
+    Read-Host 'Press Enter to exit'
+    exit 1
+}
+
+Write-Host "Worker started. Watching for status changes..."
+
+# Start Claude as a child process (output streams to console)
+$claudeProc = Start-Process -FilePath 'cmd' -ArgumentList '/c', '${claudeCommand}' -PassThru -NoNewWindow
+
+# Poll loop: watch for status changes or Claude exit
+$lastStatus = $null
+while ($true) {
+    Start-Sleep -Seconds 2
+
+    # Check session status
+    try {
+        $session = Get-Content $sessionPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        $status = $session.status
+
+        if ($status -ne $lastStatus) {
+            $lastStatus = $status
+
+            # Auto-close on complete or cancelled
+            if ($status -eq 'complete' -or $status -eq 'cancelled') {
+                if (-not $claudeProc.HasExited) {
+                    # Gracefully terminate Claude's process tree
+                    Stop-Process -Id $claudeProc.Id -Force -ErrorAction SilentlyContinue
+                    Start-Sleep -Milliseconds 500
+                }
+                exit 0
+            }
+        }
+    } catch {
+        # Ignore read errors
+    }
+
+    # Check if Claude has exited
+    if ($claudeProc.HasExited) {
+        break
+    }
+}
+
+# Claude exited naturally - check final status
+try {
+    $session = Get-Content $sessionPath -Raw | ConvertFrom-Json
+    if ($session.status -eq 'complete' -or $session.status -eq 'cancelled') {
+        exit 0
+    }
+} catch {}
+
+# Not complete - show status and wait for user
+Write-Host ''
+Write-Host '=================================================='
+Write-Host '  Worker stopped. Status: ' -NoNewline
+if ($session) { Write-Host $session.status -ForegroundColor Yellow } else { Write-Host 'unknown' -ForegroundColor Red }
+if ($session -and $session.stuckReason) {
+    Write-Host "  Reason: $($session.stuckReason)" -ForegroundColor Cyan
+}
+Write-Host '  Review the output above, then press any key...'
+Write-Host '=================================================='
+$null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+`;
+
+    const claudeDir = path.dirname(scriptPath);
+    if (!fs.existsSync(claudeDir)) {
+      fs.mkdirSync(claudeDir, { recursive: true });
+    }
+    await fs.promises.writeFile(scriptPath, script, 'utf-8');
+    return scriptPath;
   }
 
   /**
@@ -97,7 +239,7 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
       `You are an autonomous worker for Issue #${request.issueNumber}. ` +
       `Read .claude/session-prompt.md for your full instructions and begin.`;
 
-    // Escape quotes for Windows cmd
+    // Escape quotes for Windows cmd by doubling them
     const escaped = bootstrap.replace(/"/g, '""');
 
     // --dangerously-skip-permissions bypasses trust prompts for new worktree directories

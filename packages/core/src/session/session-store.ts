@@ -39,7 +39,7 @@ export class SessionStore {
   /**
    * Gets the file path for a session.
    */
-  private getSessionFilePath(sessionId: string): string {
+  getSessionFilePath(sessionId: string): string {
     return path.join(this.sessionsDir, `work-${sessionId}.json`);
   }
 

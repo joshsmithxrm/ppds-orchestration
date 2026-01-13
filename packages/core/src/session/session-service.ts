@@ -6,9 +6,9 @@ import {
   SessionState,
   SessionStatus,
   SessionContext,
-  SessionDynamicState,
   SessionListResult,
   WorktreeStatus,
+  ExecutionMode,
   STALE_THRESHOLD_MS,
 } from './types.js';
 import { SessionStore } from './session-store.js';
@@ -46,6 +46,16 @@ export interface SessionServiceConfig {
 }
 
 /**
+ * Options for spawning a new worker session.
+ */
+export interface SpawnOptions {
+  /** Execution mode: 'single' (autonomous) or 'ralph' (iterative). Default: 'single'. */
+  mode?: ExecutionMode;
+  /** Additional prompt sections to inject (from hooks). */
+  additionalPromptSections?: string[];
+}
+
+/**
  * Service for managing parallel worker sessions.
  * Port of PPDS SessionService.cs to TypeScript.
  */
@@ -65,12 +75,18 @@ export class SessionService {
   /**
    * Spawns a new worker session for an issue.
    */
-  async spawn(issueNumber: number): Promise<SessionState> {
+  async spawn(issueNumber: number, options?: SpawnOptions): Promise<SessionState> {
     const sessionId = issueNumber.toString();
+    const mode = options?.mode ?? 'single';
 
-    // Check if session already exists
+    // Check if session already exists and is still active
     if (this.store.exists(sessionId)) {
-      throw new Error(`Session for issue #${issueNumber} already exists`);
+      const existing = await this.store.load(sessionId);
+      if (existing && existing.status !== 'complete' && existing.status !== 'cancelled') {
+        throw new Error(`Session for issue #${issueNumber} already exists (status: ${existing.status})`);
+      }
+      // Session is complete/cancelled - allow re-spawn by deleting old session
+      await this.store.delete(sessionId);
     }
 
     // Check spawner availability
@@ -99,11 +115,14 @@ export class SessionService {
       issueNumber,
       issueInfo.title,
       issueInfo.body,
-      branchName
+      branchName,
+      mode,
+      options?.additionalPromptSections
     );
 
     // Write session context (static identity file)
     const now = new Date().toISOString();
+    const sessionFilePath = this.store.getSessionFilePath(sessionId);
     const context: SessionContext = {
       sessionId,
       issueNumber,
@@ -119,15 +138,9 @@ export class SessionService {
         heartbeat: `orch heartbeat --id ${issueNumber}`,
       },
       spawnedAt: now,
+      sessionFilePath,
     };
     await this.store.writeSessionContext(worktreePath, context);
-
-    // Write initial session state (dynamic state file)
-    const dynamicState: SessionDynamicState = {
-      status: 'registered',
-      lastUpdated: now,
-    };
-    await this.store.writeSessionState(worktreePath, dynamicState);
 
     // Register session
     const session: SessionState = {
@@ -135,6 +148,7 @@ export class SessionService {
       issueNumber,
       issueTitle: issueInfo.title,
       status: 'registered',
+      mode,
       branch: branchName,
       worktreePath,
       startedAt: now,
@@ -144,21 +158,21 @@ export class SessionService {
     await this.store.save(session);
 
     // Spawn worker
-    try {
-      await this.spawner.spawn({
-        sessionId,
-        issueNumber,
-        issueTitle: issueInfo.title,
-        workingDirectory: worktreePath,
-        promptFilePath: promptPath,
-        githubOwner: this.config.githubOwner,
-        githubRepo: this.config.githubRepo,
-      });
-    } catch (error) {
+    const spawnResult = await this.spawner.spawn({
+      sessionId,
+      issueNumber,
+      issueTitle: issueInfo.title,
+      workingDirectory: worktreePath,
+      promptFilePath: promptPath,
+      githubOwner: this.config.githubOwner,
+      githubRepo: this.config.githubRepo,
+    });
+
+    if (!spawnResult.success) {
       // Clean up on failure
       await this.store.delete(sessionId);
       await this.gitUtils.removeWorktree(worktreePath);
-      throw error;
+      throw new Error(spawnResult.error ?? 'Failed to spawn worker');
     }
 
     // Update to working status
@@ -168,10 +182,6 @@ export class SessionService {
       lastHeartbeat: new Date().toISOString(),
     };
     await this.store.save(updatedSession);
-    await this.store.writeSessionState(worktreePath, {
-      status: 'working',
-      lastUpdated: new Date().toISOString(),
-    });
 
     return updatedSession;
   }
@@ -258,15 +268,6 @@ export class SessionService {
 
     await this.store.save(updatedSession);
 
-    // Also update worktree state file
-    if (fs.existsSync(session.worktreePath)) {
-      await this.store.writeSessionState(session.worktreePath, {
-        status,
-        forwardedMessage: session.forwardedMessage,
-        lastUpdated: now,
-      });
-    }
-
     return updatedSession;
   }
 
@@ -314,8 +315,8 @@ export class SessionService {
       throw new Error(`Session '${sessionId}' not found`);
     }
 
-    // Update status to cancelled
-    await this.update(sessionId, 'cancelled');
+    // Skip intermediate 'cancelled' status update - delete directly to avoid
+    // race condition where watcher broadcasts 'cancelled' before deletion
 
     // Remove worktree unless keepWorktree is true
     if (!options?.keepWorktree && fs.existsSync(session.worktreePath)) {
@@ -362,14 +363,12 @@ export class SessionService {
 
     await this.store.save(updatedSession);
 
-    // Update worktree state file
-    if (fs.existsSync(session.worktreePath)) {
-      await this.store.writeSessionState(session.worktreePath, {
-        status: session.status,
-        forwardedMessage: message,
-        lastUpdated: now,
-      });
-    }
+    // Also write to worktree for worker to read
+    await this.store.writeSessionState(session.worktreePath, {
+      status: updatedSession.status,
+      forwardedMessage: message,
+      lastUpdated: now,
+    });
 
     return updatedSession;
   }
@@ -417,15 +416,6 @@ export class SessionService {
 
     await this.store.save(updatedSession);
 
-    // Clear in worktree state file too
-    if (fs.existsSync(session.worktreePath)) {
-      await this.store.writeSessionState(session.worktreePath, {
-        status: session.status,
-        forwardedMessage: undefined,
-        lastUpdated: now,
-      });
-    }
-
     return updatedSession;
   }
 
@@ -449,6 +439,13 @@ export class SessionService {
     const lastHeartbeat = new Date(session.lastHeartbeat).getTime();
     const now = Date.now();
     return now - lastHeartbeat > STALE_THRESHOLD_MS;
+  }
+
+  /**
+   * Gets the sessions directory path (for file watching).
+   */
+  getSessionsDir(): string {
+    return this.store.getSessionsDir();
   }
 
   // ============================================
@@ -510,7 +507,9 @@ export class SessionService {
     issueNumber: number,
     title: string,
     body: string,
-    branchName: string
+    branchName: string,
+    mode: ExecutionMode = 'single',
+    additionalPromptSections?: string[]
   ): Promise<string> {
     const claudeDir = path.join(worktreePath, '.claude');
 
@@ -520,7 +519,7 @@ export class SessionService {
 
     const promptPath = path.join(claudeDir, 'session-prompt.md');
     const cli = this.config.cliCommand ?? 'orch';
-    const prompt = `# Session: Issue #${issueNumber}
+    let prompt = `# Session: Issue #${issueNumber}
 
 ## Repository Context
 
@@ -543,26 +542,36 @@ ${body}
 
 ## Status Reporting
 
-**Report status at each phase transition** so the orchestrator can track your progress:
+**Report status at each phase transition** by updating the session file directly.
 
-| Phase | Command |
-|-------|---------|
-| Starting | \`${cli} update --id ${issueNumber} --status planning\` |
-| Plan complete | \`${cli} update --id ${issueNumber} --status planning_complete\` |
-| Implementing | \`${cli} update --id ${issueNumber} --status working\` |
-| Stuck | \`${cli} update --id ${issueNumber} --status stuck --reason "description"\` |
+**Session file location:** Read \`session-context.json\` in the worktree root to find the \`sessionFilePath\` field.
+
+| Phase | Status Value |
+|-------|--------------|
+| Starting | \`planning\` |
+| Plan complete | \`planning_complete\` |
+| Implementing | \`working\` |
+| Stuck | \`stuck\` (also set \`stuckReason\`) |
+| Complete | \`complete\` |
+
+**How to update status:**
+1. Read the session file (path from \`session-context.json\` → \`sessionFilePath\`)
+2. Update the \`status\` field to the new value
+3. Update \`lastHeartbeat\` to current ISO timestamp
+4. If stuck, also set \`stuckReason\` to explain what you need
+5. Write the updated JSON back to the session file
 
 **Note:** \`/ship\` automatically updates status to \`shipping\` → \`reviews_in_progress\` → \`complete\`.
 
 ## Workflow
 
 ### Phase 1: Planning
-1. **First:** \`${cli} update --id ${issueNumber} --status planning\`
+1. **First:** Update session file with \`"status": "planning"\`
 2. Read and understand the issue requirements
 3. Explore the codebase to understand existing patterns
 4. Create a detailed implementation plan
 5. Write your plan to \`.claude/worker-plan.md\`
-6. **Then:** \`${cli} update --id ${issueNumber} --status planning_complete\`
+6. **Then:** Update session file with \`"status": "planning_complete"\`
 
 ### Message Check Protocol
 
@@ -571,20 +580,17 @@ Check for forwarded messages at these points:
 2. **When stuck** - check every 5 minutes while waiting for guidance
 3. **Before major decisions** - architectural choices, security implementations
 
-**How to check:**
-\`\`\`bash
-cat session-state.json | jq -r '.forwardedMessage // empty'
-\`\`\`
+**How to check:** Read the session file and check the \`forwardedMessage\` field.
 
 **If message exists:**
 1. Read and incorporate the guidance into your approach
-2. Acknowledge receipt: \`${cli} ack ${issueNumber}\`
+2. Clear the message by setting \`forwardedMessage\` to \`undefined\` (or remove the field)
 3. Continue with your work (the guidance may unstick you)
 
 **Important:** When your status is \`stuck\`, check for messages periodically - the orchestrator may have sent guidance that unblocks you.
 
 ### Phase 3: Implementation
-1. **First:** \`${cli} update --id ${issueNumber} --status working\`
+1. **First:** Update session file with \`"status": "working"\`
 2. Follow your plan in \`.claude/worker-plan.md\`
 3. Build and test your changes
 4. Create PR via \`/ship\` (handles remaining status updates automatically)
@@ -596,13 +602,20 @@ If you encounter these, set status to \`stuck\` with a clear reason:
 - Breaking changes
 - Data migration
 
-Example: \`${cli} update --id ${issueNumber} --status stuck --reason "Need auth decision: should we use JWT or session tokens?"\`
+**Example:** Update session file with \`"status": "stuck"\` and \`"stuckReason": "Need auth decision: should we use JWT or session tokens?"\`
 
 ## Reference
 - Follow CLAUDE.md for coding standards
 - Build must pass before shipping
 - Tests must pass before shipping
 `;
+
+    // Add additional prompt sections from hooks
+    if (additionalPromptSections && additionalPromptSections.length > 0) {
+      prompt += '\n## Additional Instructions\n\n';
+      prompt += additionalPromptSections.join('\n\n');
+      prompt += '\n';
+    }
 
     await fs.promises.writeFile(promptPath, prompt, 'utf-8');
     return promptPath;

@@ -12,6 +12,7 @@ import { heartbeatCommand } from './commands/heartbeat.js';
 import { ackCommand } from './commands/ack.js';
 import { pauseCommand } from './commands/pause.js';
 import { resumeCommand } from './commands/resume.js';
+import { dashboardCommand } from './commands/dashboard.js';
 
 const program = new Command();
 
@@ -123,13 +124,17 @@ program
   .description('Resume a paused session')
   .action(withErrorHandling(resumeCommand));
 
-// dashboard command (placeholder)
+// dashboard command
 program
   .command('dashboard')
   .description('Launch the orchestration dashboard')
-  .action(() => {
-    console.log(chalk.yellow('Dashboard not yet implemented. Coming soon!'));
-    process.exit(0);
-  });
+  .option('-o, --open', 'Open browser automatically')
+  .option('-p, --port <port>', 'Port to run on (overrides config)')
+  .action(withErrorHandling(async (options: { open?: boolean; port?: string }) => {
+    await dashboardCommand({
+      open: options.open,
+      port: options.port ? parseInt(options.port, 10) : undefined,
+    });
+  }));
 
 program.parse();

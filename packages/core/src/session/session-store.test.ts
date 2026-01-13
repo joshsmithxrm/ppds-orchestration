@@ -25,6 +25,7 @@ describe('SessionStore', () => {
     issueNumber,
     issueTitle: `Test issue #${issueNumber}`,
     status: 'working',
+    mode: 'single',
     branch: `issue-${issueNumber}`,
     worktreePath: `/tmp/test-worktree-${issueNumber}`,
     startedAt: new Date().toISOString(),
@@ -165,6 +166,7 @@ describe('SessionStore', () => {
           heartbeat: 'orch heartbeat --id 123',
         },
         spawnedAt: new Date().toISOString(),
+        sessionFilePath: path.join(worktreePath, '..', 'sessions', '123.json'),
       };
 
       await store.writeSessionContext(worktreePath, context);
