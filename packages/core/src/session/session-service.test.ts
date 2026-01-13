@@ -4,7 +4,6 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { SessionService, SessionServiceConfig, createSessionService } from './session-service.js';
 import { SessionState } from './types.js';
-import { SessionStore } from './session-store.js';
 
 // Mock worker spawner that doesn't actually spawn terminals
 const mockSpawner = {

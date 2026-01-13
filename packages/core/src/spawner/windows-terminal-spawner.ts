@@ -165,30 +165,38 @@ param([string]$sessionPath)
 $ErrorActionPreference = 'SilentlyContinue'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
+# Get parent PID (the worker-wrapper.cmd process) to scope process killing
+# This ensures we only kill processes belonging to THIS worker, not all workers
+$parentPid = 0
+try {
+    $myProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $pid" -ErrorAction Stop
+    $parentPid = $myProcess.ParentProcessId
+} catch {
+    # If we can't get the parent PID, we'll fall back to signal-only mode
+}
+
 while ($true) {
     Start-Sleep -Seconds 1
 
     try {
-        $session = Get-Content $sessionPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        $session = Get-Content $sessionPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         $status = $session.status
 
         if ($status -eq 'complete' -or $status -eq 'cancelled') {
             # Create signal file for wrapper to detect (do this FIRST)
             "clean" | Out-File (Join-Path $scriptDir 'exit-signal') -Force -Encoding ASCII
 
-            # Kill Claude and related processes
-            # Find cmd.exe processes with claude in command line and kill their trees
-            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-                $_.Name -eq 'cmd.exe' -and $_.CommandLine -like '*claude*--dangerously-skip-permissions*'
-            } | ForEach-Object {
-                & taskkill /T /F /PID $_.ProcessId 2>$null
-            }
-
-            # Also kill any direct claude.exe processes
-            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-                $_.Name -eq 'claude.exe'
-            } | ForEach-Object {
-                & taskkill /T /F /PID $_.ProcessId 2>$null
+            if ($parentPid -ne 0) {
+                # Kill Claude process tree associated with this specific worker only
+                # We find children of our parent (worker-wrapper.cmd) that look like the Claude process
+                Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+                    $_.ParentProcessId -eq $parentPid -and (
+                        ($_.Name -eq 'cmd.exe' -and $_.CommandLine -like '*claude*--dangerously-skip-permissions*') -or
+                        ($_.Name -eq 'claude.exe')
+                    )
+                } | ForEach-Object {
+                    & taskkill /T /F /PID $_.ProcessId 2>$null
+                }
             }
 
             exit 0
