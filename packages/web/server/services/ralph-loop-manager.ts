@@ -189,13 +189,13 @@ export class RalphLoopManager {
 
         // Check if promise is met (early exit)
         if (await this.checkPromise(state, session)) {
-          this.handlePromiseMet(state);
+          await this.handlePromiseMet(state, session.worktreePath);
           continue;
         }
 
         // Check if done signal detected
         if (await this.checkDoneSignal(state, session)) {
-          this.handleLoopDone(state, 'done_signal');
+          await this.handleLoopDone(state, 'done_signal', session.worktreePath);
           continue;
         }
 
@@ -203,7 +203,7 @@ export class RalphLoopManager {
         if (session.status === 'complete') {
           // Worker marked itself complete - check if really done
           if (await this.checkDoneSignal(state, session)) {
-            this.handleLoopDone(state, 'status_complete');
+            await this.handleLoopDone(state, 'status_complete', session.worktreePath);
           } else {
             // Not done, start next iteration
             await this.handleIterationComplete(state, session);
@@ -323,11 +323,14 @@ export class RalphLoopManager {
     currentIteration.exitType = 'clean';
     currentIteration.statusAtEnd = session.status;
 
+    // Perform git operations (commit/push) after iteration completes
+    await this.performGitOperations(state, session.worktreePath);
+
     this.emit('iteration_end', state);
 
     // Check if target iterations reached
     if (state.currentIteration >= state.targetIterations) {
-      this.handleLoopDone(state, `Target iterations (${state.targetIterations}) completed`);
+      await this.handleLoopDone(state, `Target iterations (${state.targetIterations}) completed`, session.worktreePath);
       return;
     }
 
@@ -370,10 +373,19 @@ export class RalphLoopManager {
   /**
    * Handle loop completion.
    */
-  private handleLoopDone(state: RalphLoopState, reason: string): void {
+  private async handleLoopDone(
+    state: RalphLoopState,
+    reason: string,
+    worktreePath?: string
+  ): Promise<void> {
     const currentIteration = state.iterations[state.iterations.length - 1];
     currentIteration.endedAt = new Date().toISOString();
     currentIteration.doneSignalDetected = true;
+
+    // Perform final git operations (PR creation) before stopping
+    if (worktreePath) {
+      await this.performFinalGitOperations(state, worktreePath);
+    }
 
     state.state = 'done';
     this.emit('loop_done', state);
@@ -385,11 +397,14 @@ export class RalphLoopManager {
   /**
    * Handle promise being met (early successful exit).
    */
-  private handlePromiseMet(state: RalphLoopState): void {
+  private async handlePromiseMet(state: RalphLoopState, worktreePath: string): Promise<void> {
     const currentIteration = state.iterations[state.iterations.length - 1];
     currentIteration.endedAt = new Date().toISOString();
     currentIteration.exitType = 'promise_met';
     currentIteration.doneSignalDetected = true;
+
+    // Perform final git operations (PR creation) before stopping
+    await this.performFinalGitOperations(state, worktreePath);
 
     state.state = 'done';
     this.emit('loop_done', state);
@@ -421,6 +436,116 @@ export class RalphLoopManager {
       } catch (error) {
         console.error('Error in Ralph event callback:', error);
       }
+    }
+  }
+
+  /**
+   * Perform git operations after an iteration completes.
+   * Commits and pushes based on gitOperations config.
+   * @param state The current loop state
+   * @param worktreePath Path to the git worktree
+   */
+  private async performGitOperations(
+    state: RalphLoopState,
+    worktreePath: string
+  ): Promise<void> {
+    const { gitOperations } = state.config;
+
+    // Commit changes if configured
+    if (gitOperations.commitAfterEach) {
+      try {
+        // Stage all changes
+        await execAsync('git add -A', { cwd: worktreePath });
+
+        // Check if there are staged changes
+        const { stdout: statusOutput } = await execAsync(
+          'git diff --cached --quiet || echo "changes"',
+          { cwd: worktreePath }
+        );
+
+        if (statusOutput.trim() === 'changes') {
+          const commitMessage = `chore: ralph iteration ${state.currentIteration}`;
+          await execAsync(`git commit -m "${commitMessage}"`, { cwd: worktreePath });
+          console.log(`Ralph: Committed changes for iteration ${state.currentIteration}`);
+        } else {
+          console.log(`Ralph: No changes to commit for iteration ${state.currentIteration}`);
+        }
+      } catch (error) {
+        console.warn(
+          `Ralph: Git commit failed for ${state.repoId}/${state.sessionId}:`,
+          (error as Error).message
+        );
+      }
+    }
+
+    // Push changes if configured
+    if (gitOperations.pushAfterEach) {
+      try {
+        await execAsync('git push', { cwd: worktreePath });
+        console.log(`Ralph: Pushed changes for iteration ${state.currentIteration}`);
+      } catch (error) {
+        console.warn(
+          `Ralph: Git push failed for ${state.repoId}/${state.sessionId}:`,
+          (error as Error).message
+        );
+      }
+    }
+  }
+
+  /**
+   * Perform final git operations when loop completes.
+   * Creates a PR if configured.
+   * @param state The current loop state
+   * @param worktreePath Path to the git worktree
+   */
+  private async performFinalGitOperations(
+    state: RalphLoopState,
+    worktreePath: string
+  ): Promise<void> {
+    const { gitOperations } = state.config;
+
+    if (!gitOperations.createPrOnComplete) {
+      return;
+    }
+
+    try {
+      // Get the current branch name
+      const { stdout: branchName } = await execAsync(
+        'git rev-parse --abbrev-ref HEAD',
+        { cwd: worktreePath }
+      );
+      const branch = branchName.trim();
+
+      // Don't create PR if on main/master
+      if (branch === 'main' || branch === 'master') {
+        console.log('Ralph: Skipping PR creation - on main/master branch');
+        return;
+      }
+
+      // Generate PR title and body
+      const prTitle = `Ralph: ${state.repoId}/${state.sessionId} completed`;
+      const prBody = [
+        '## Ralph Loop Summary',
+        '',
+        `- **Repository:** ${state.repoId}`,
+        `- **Session:** ${state.sessionId}`,
+        `- **Iterations completed:** ${state.currentIteration}`,
+        `- **Target iterations:** ${state.targetIterations}`,
+        '',
+        '_This PR was automatically created by Ralph loop manager._',
+      ].join('\n');
+
+      // Create the PR using gh CLI
+      await execAsync(
+        `gh pr create --title "${prTitle}" --body "${prBody.replace(/"/g, '\\"')}"`,
+        { cwd: worktreePath }
+      );
+      console.log(`Ralph: Created PR for ${state.repoId}/${state.sessionId}`);
+    } catch (error) {
+      console.warn(
+        `Ralph: PR creation failed for ${state.repoId}/${state.sessionId}:`,
+        (error as Error).message
+      );
     }
   }
 
