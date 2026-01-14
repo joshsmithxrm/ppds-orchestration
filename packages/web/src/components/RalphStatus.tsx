@@ -10,18 +10,38 @@ interface RalphIteration {
   statusAtEnd?: string;
 }
 
+interface GitOperationsConfig {
+  commitAfterEach: boolean;
+  pushAfterEach: boolean;
+  createPrOnComplete: boolean;
+}
+
+interface GitCommitStatus {
+  status: 'success' | 'no_changes' | 'failed';
+  message?: string;
+  iteration?: number;
+}
+
+interface GitPushStatus {
+  status: 'success' | 'failed';
+  message?: string;
+}
+
 interface RalphLoopState {
   repoId: string;
   sessionId: string;
   config: {
     maxIterations: number;
     iterationDelayMs: number;
+    gitOperations: GitOperationsConfig;
   };
   currentIteration: number;
   state: 'running' | 'waiting' | 'done' | 'stuck' | 'paused';
   iterations: RalphIteration[];
   consecutiveFailures: number;
   lastChecked?: string;
+  lastCommit?: GitCommitStatus;
+  lastPush?: GitPushStatus;
 }
 
 interface RalphStatusProps {
@@ -192,6 +212,80 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
                   )}
                 </div>
               ))}
+          </div>
+        </div>
+      )}
+
+      {/* Git Operations */}
+      {state.config.gitOperations && (
+        <div>
+          <h4 className="text-sm text-gray-400 mb-2">Git Operations</h4>
+          <div className="bg-gray-700/50 rounded p-2 space-y-2">
+            {/* Config */}
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span
+                className={
+                  state.config.gitOperations.commitAfterEach
+                    ? 'text-green-400'
+                    : 'text-gray-500'
+                }
+                title="Commit after each iteration"
+              >
+                {state.config.gitOperations.commitAfterEach ? '\u2713' : '\u2717'} commit
+              </span>
+              <span
+                className={
+                  state.config.gitOperations.pushAfterEach
+                    ? 'text-green-400'
+                    : 'text-gray-500'
+                }
+                title="Push after each iteration"
+              >
+                {state.config.gitOperations.pushAfterEach ? '\u2713' : '\u2717'} push
+              </span>
+              <span
+                className={
+                  state.config.gitOperations.createPrOnComplete
+                    ? 'text-green-400'
+                    : 'text-gray-500'
+                }
+                title="Create PR on completion"
+              >
+                {state.config.gitOperations.createPrOnComplete ? '\u2713' : '\u2717'} PR
+              </span>
+            </div>
+
+            {/* Status */}
+            {(state.lastCommit || state.lastPush) && (
+              <div className="border-t border-gray-600 pt-2 space-y-1 text-xs">
+                {state.lastCommit && (
+                  <div
+                    className={
+                      state.lastCommit.status === 'success'
+                        ? 'text-green-400'
+                        : state.lastCommit.status === 'no_changes'
+                        ? 'text-gray-400'
+                        : 'text-red-400'
+                    }
+                  >
+                    <span className="font-medium">Commit:</span>{' '}
+                    {state.lastCommit.message}
+                  </div>
+                )}
+                {state.lastPush && (
+                  <div
+                    className={
+                      state.lastPush.status === 'success'
+                        ? 'text-green-400'
+                        : 'text-red-400'
+                    }
+                  >
+                    <span className="font-medium">Push:</span>{' '}
+                    {state.lastPush.message}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

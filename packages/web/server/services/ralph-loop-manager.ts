@@ -26,6 +26,23 @@ export interface RalphIteration {
 }
 
 /**
+ * Status of the last git commit operation.
+ */
+export interface GitCommitStatus {
+  status: 'success' | 'no_changes' | 'failed';
+  message?: string;
+  iteration?: number;
+}
+
+/**
+ * Status of the last git push operation.
+ */
+export interface GitPushStatus {
+  status: 'success' | 'failed';
+  message?: string;
+}
+
+/**
  * State of a Ralph loop for a specific session.
  */
 export interface RalphLoopState {
@@ -39,6 +56,10 @@ export interface RalphLoopState {
   iterations: RalphIteration[];
   consecutiveFailures: number;
   lastChecked?: string;
+  /** Status of the last git commit operation */
+  lastCommit?: GitCommitStatus;
+  /** Status of the last git push operation */
+  lastPush?: GitPushStatus;
 }
 
 /**
@@ -467,14 +488,30 @@ export class RalphLoopManager {
           const commitMessage = `chore: ralph iteration ${state.currentIteration}`;
           await execAsync(`git commit -m "${commitMessage}"`, { cwd: worktreePath });
           console.log(`Ralph: Committed changes for iteration ${state.currentIteration}`);
+          state.lastCommit = {
+            status: 'success',
+            message: `Committed iteration ${state.currentIteration}`,
+            iteration: state.currentIteration,
+          };
         } else {
           console.log(`Ralph: No changes to commit for iteration ${state.currentIteration}`);
+          state.lastCommit = {
+            status: 'no_changes',
+            message: 'No changes to commit',
+            iteration: state.currentIteration,
+          };
         }
       } catch (error) {
+        const errorMessage = (error as Error).message;
         console.warn(
           `Ralph: Git commit failed for ${state.repoId}/${state.sessionId}:`,
-          (error as Error).message
+          errorMessage
         );
+        state.lastCommit = {
+          status: 'failed',
+          message: errorMessage,
+          iteration: state.currentIteration,
+        };
       }
     }
 
@@ -483,11 +520,20 @@ export class RalphLoopManager {
       try {
         await execAsync('git push', { cwd: worktreePath });
         console.log(`Ralph: Pushed changes for iteration ${state.currentIteration}`);
+        state.lastPush = {
+          status: 'success',
+          message: 'Pushed successfully',
+        };
       } catch (error) {
+        const errorMessage = (error as Error).message;
         console.warn(
           `Ralph: Git push failed for ${state.repoId}/${state.sessionId}:`,
-          (error as Error).message
+          errorMessage
         );
+        state.lastPush = {
+          status: 'failed',
+          message: errorMessage,
+        };
       }
     }
   }
