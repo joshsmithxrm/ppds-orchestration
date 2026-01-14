@@ -16,7 +16,7 @@ Build and serve the production site locally.
    ```bash
    npm run start -w packages/web
    ```
-3. Report the URL
+3. Report the URL (e.g., http://localhost:3847)
 
 ## Notes
 
