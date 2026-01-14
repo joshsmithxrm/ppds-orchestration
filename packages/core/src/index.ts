@@ -52,6 +52,8 @@ export {
   RalphConfig,
   DashboardConfig,
   DoneSignalConfig,
+  PromiseConfig,
+  GitOperationsConfig,
 } from './config/central-config.js';
 
 // Config loader utilities

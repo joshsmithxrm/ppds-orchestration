@@ -90,12 +90,56 @@ export const DoneSignalConfig = z.object({
 export type DoneSignalConfig = z.infer<typeof DoneSignalConfig>;
 
 /**
+ * Promise configuration for Ralph loop completion.
+ * Defines the goal that signals successful task completion.
+ */
+export const PromiseConfig = z.object({
+  /**
+   * Type of promise to check:
+   * - 'plan_complete': All tasks in plan file are marked done
+   * - 'file': Specific file exists at path
+   * - 'tests_pass': Test command exits successfully
+   * - 'custom': Custom shell command returns success
+   */
+  type: z.enum(['plan_complete', 'file', 'tests_pass', 'custom']),
+  /**
+   * Value depends on type:
+   * - plan_complete: path to plan file (e.g., 'IMPLEMENTATION_PLAN.md')
+   * - file: path to file to check for
+   * - tests_pass: test command to run (e.g., 'npm test')
+   * - custom: shell command to execute
+   */
+  value: z.string(),
+});
+
+export type PromiseConfig = z.infer<typeof PromiseConfig>;
+
+/**
+ * Git operations configuration for Ralph loop.
+ * Controls automatic git operations after iterations.
+ */
+export const GitOperationsConfig = z.object({
+  /** Whether to commit changes after each iteration (default: true) */
+  commitAfterEach: z.boolean().default(true),
+  /** Whether to push changes after each iteration (default: true) */
+  pushAfterEach: z.boolean().default(true),
+  /** Whether to create a PR when Ralph loop completes (default: true) */
+  createPrOnComplete: z.boolean().default(true),
+});
+
+export type GitOperationsConfig = z.infer<typeof GitOperationsConfig>;
+
+/**
  * Ralph loop execution settings.
  */
 export const RalphConfig = z.object({
-  /** Default number of iterations when not specified at spawn time (default: 10) */
-  defaultIterations: z.number().default(10),
-  /** Optional early-exit signal (file-based by default - won't trigger unless file is created) */
+  /** Maximum number of iterations when not specified at spawn time (default: 10) */
+  maxIterations: z.number().default(10),
+  /** Promise configuration - defines the goal for task completion */
+  promise: PromiseConfig.default({ type: 'plan_complete', value: 'IMPLEMENTATION_PLAN.md' }),
+  /** Git operations configuration - controls automatic git actions */
+  gitOperations: GitOperationsConfig.default({}),
+  /** Optional early-exit signal (file-based by default) */
   doneSignal: DoneSignalConfig.default({ type: 'file', value: '.claude/.ralph-done' }),
   /** Delay between iterations in ms (default: 5000) */
   iterationDelayMs: z.number().default(5000),

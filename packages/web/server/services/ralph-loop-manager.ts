@@ -1,11 +1,16 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   SessionState,
   RalphConfig,
   getRepoEffectiveConfig,
   CentralConfig,
+  isPromiseMet,
 } from '@ppds-orchestration/core';
+
+const execAsync = promisify(exec);
 import { MultiRepoService } from './multi-repo-service.js';
 
 /**
@@ -15,7 +20,7 @@ export interface RalphIteration {
   iteration: number;
   startedAt: string;
   endedAt?: string;
-  exitType: 'clean' | 'abnormal' | 'running';
+  exitType: 'clean' | 'abnormal' | 'running' | 'promise_met';
   doneSignalDetected: boolean;
   statusAtEnd?: string;
 }
@@ -79,7 +84,7 @@ export class RalphLoopManager {
     }
 
     const effectiveConfig = getRepoEffectiveConfig(this.centralConfig, repoId);
-    const targetIterations = options?.iterations ?? effectiveConfig.ralph.defaultIterations;
+    const targetIterations = options?.iterations ?? effectiveConfig.ralph.maxIterations;
 
     const state: RalphLoopState = {
       repoId,
@@ -182,6 +187,12 @@ export class RalphLoopManager {
 
         state.lastChecked = new Date().toISOString();
 
+        // Check if promise is met (early exit)
+        if (await this.checkPromise(state, session)) {
+          this.handlePromiseMet(state);
+          continue;
+        }
+
         // Check if done signal detected
         if (await this.checkDoneSignal(state, session)) {
           this.handleLoopDone(state, 'done_signal');
@@ -234,6 +245,66 @@ export class RalphLoopManager {
       case 'exit_code':
         // Exit code checking requires process tracking
         return false;
+
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Check if the promise condition is met.
+   * Promise types:
+   * - plan_complete: All tasks in plan file are marked done
+   * - file: Specific file exists at path
+   * - tests_pass: Test command exits successfully
+   * - custom: Custom shell command returns success
+   */
+  private async checkPromise(
+    state: RalphLoopState,
+    session: SessionState
+  ): Promise<boolean> {
+    const { promise } = state.config;
+
+    switch (promise.type) {
+      case 'plan_complete': {
+        const planPath = path.join(session.worktreePath, promise.value);
+        try {
+          if (!fs.existsSync(planPath)) {
+            return false;
+          }
+          const content = fs.readFileSync(planPath, 'utf-8');
+          return isPromiseMet(content);
+        } catch {
+          return false;
+        }
+      }
+
+      case 'file': {
+        const filePath = path.join(session.worktreePath, promise.value);
+        try {
+          return fs.existsSync(filePath);
+        } catch {
+          return false;
+        }
+      }
+
+      case 'tests_pass': {
+        try {
+          await execAsync(promise.value, { cwd: session.worktreePath });
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      case 'custom': {
+        try {
+          await execAsync(promise.value, { cwd: session.worktreePath });
+          return true;
+        } catch {
+          return false;
+        }
+      }
 
       default:
         return false;
@@ -309,6 +380,22 @@ export class RalphLoopManager {
     this.stopLoop(state.repoId, state.sessionId);
 
     console.log(`Ralph loop completed for ${state.repoId}/${state.sessionId}: ${reason}`);
+  }
+
+  /**
+   * Handle promise being met (early successful exit).
+   */
+  private handlePromiseMet(state: RalphLoopState): void {
+    const currentIteration = state.iterations[state.iterations.length - 1];
+    currentIteration.endedAt = new Date().toISOString();
+    currentIteration.exitType = 'promise_met';
+    currentIteration.doneSignalDetected = true;
+
+    state.state = 'done';
+    this.emit('loop_done', state);
+    this.stopLoop(state.repoId, state.sessionId);
+
+    console.log(`Ralph loop completed for ${state.repoId}/${state.sessionId}: promise_met`);
   }
 
   /**
