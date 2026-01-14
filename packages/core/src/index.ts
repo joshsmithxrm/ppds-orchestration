@@ -91,3 +91,11 @@ export type { HookContext, HookResult } from './hooks/hook-executor.js';
 // Process tracker
 export { ProcessTracker } from './process/process-tracker.js';
 export type { TrackedProcess, ProcessExitCallback } from './process/process-tracker.js';
+
+// Plan parser utilities
+export {
+  parsePlanFile,
+  getCurrentTask,
+  isPromiseMet,
+} from './utils/plan-parser.js';
+export type { Task, PlanSummary, ParsedPlan } from './utils/plan-parser.js';
