@@ -288,9 +288,7 @@ pause >nul
       ? `Issue #${issueNumbers[0]}`
       : `Issues #${issueNumbers.join(', #')}`;
 
-    const bootstrap =
-      `You are an autonomous worker for ${issueLabel}. ` +
-      `Read .claude/session-prompt.md for your full instructions and begin.`;
+    const bootstrap = `You are an autonomous worker for ${issueLabel}. Read .claude/session-prompt.md for your full instructions and begin.`;
 
     // Escape quotes for Windows cmd by doubling them
     const escaped = bootstrap.replace(/"/g, '""');

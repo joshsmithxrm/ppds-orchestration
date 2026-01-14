@@ -113,12 +113,11 @@ program
 
 // heartbeat command
 program
-  .command('heartbeat')
+  .command('heartbeat <session>')
   .description('Send a heartbeat for a session')
-  .requiredOption('--id <session>', 'Session ID')
   .option('-q, --quiet', 'Suppress output (for automated use)')
-  .action(withErrorHandling(async (options: { id: string; quiet?: boolean }) => {
-    await heartbeatCommand(options.id, { quiet: options.quiet });
+  .action(withErrorHandling(async (session: string, options: { quiet?: boolean }) => {
+    await heartbeatCommand(session, { quiet: options.quiet });
   }));
 
 // ack command

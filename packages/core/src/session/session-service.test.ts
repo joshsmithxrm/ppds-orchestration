@@ -178,6 +178,11 @@ describe('SessionService', () => {
   });
 
   describe('delete', () => {
+    beforeEach(() => {
+      // Mock GitUtils.removeWorktree since test worktrees aren't real git worktrees
+      vi.spyOn(service['gitUtils'], 'removeWorktree').mockResolvedValue({ success: true });
+    });
+
     it('should delete a session and remove worktree', async () => {
       const sessionsDir = path.join(tempDir, 'test-project', 'sessions');
       fs.mkdirSync(sessionsDir, { recursive: true });

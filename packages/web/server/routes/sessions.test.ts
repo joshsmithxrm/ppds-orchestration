@@ -257,7 +257,7 @@ describe('Sessions API', () => {
     });
 
     it('cancels a session', async () => {
-      mockMultiRepoService.delete.mockResolvedValue(undefined);
+      mockMultiRepoService.delete.mockResolvedValue({ success: true, sessionDeleted: true, worktreeRemoved: true });
 
       const app = createApp();
       const response = await request(app)
@@ -300,24 +300,24 @@ describe('Sessions API', () => {
 
   describe('DELETE /api/sessions/:repoId/:sessionId', () => {
     it('deletes a session', async () => {
-      mockMultiRepoService.delete.mockResolvedValue(undefined);
+      mockMultiRepoService.delete.mockResolvedValue({ success: true, sessionDeleted: true, worktreeRemoved: true });
 
       const app = createApp();
       const response = await request(app).delete('/api/sessions/repo-1/123');
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
-      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123', false);
+      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123', { keepWorktree: false, force: false });
     });
 
     it('keeps worktree when requested', async () => {
-      mockMultiRepoService.delete.mockResolvedValue(undefined);
+      mockMultiRepoService.delete.mockResolvedValue({ success: true, sessionDeleted: true, worktreeRemoved: true });
 
       const app = createApp();
       const response = await request(app).delete('/api/sessions/repo-1/123?keepWorktree=true');
 
       expect(response.status).toBe(200);
-      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123', true);
+      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123', { keepWorktree: true, force: false });
     });
   });
 });

@@ -235,14 +235,14 @@ describe('SessionView', () => {
     });
   });
 
-  it('handles cancel action', async () => {
+  it('handles delete action', async () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string, options) => {
-      if (options?.method === 'PATCH') {
+      if (options?.method === 'DELETE') {
         return Promise.resolve({
           ok: true,
           json: () =>
             Promise.resolve({
-              session: { ...mockSession, status: 'cancelled' },
+              success: true,
             }),
         });
       }
@@ -254,19 +254,30 @@ describe('SessionView', () => {
 
     renderSessionView();
 
+    // Wait for page to load and find the Delete button in the actions area
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: /Delete/i })[0]).toBeInTheDocument();
     });
 
-    const cancelButton = screen.getByRole('button', { name: /Cancel/i });
-    fireEvent.click(cancelButton);
+    // Click the first Delete button (the one in the actions area, not in the dialog)
+    const deleteButtons = screen.getAllByRole('button', { name: /Delete/i });
+    fireEvent.click(deleteButtons[0]);
+
+    // Delete button opens a confirmation dialog
+    await waitFor(() => {
+      expect(screen.getByText('Delete Session')).toBeInTheDocument();
+    });
+
+    // Click the confirm button in the dialog (now there are two Delete buttons)
+    const allDeleteButtons = screen.getAllByRole('button', { name: /Delete/i });
+    // The dialog confirm button is the second one
+    fireEvent.click(allDeleteButtons[1]);
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
-        '/api/sessions/test-repo/123',
+        expect.stringContaining('/api/sessions/test-repo/123'),
         expect.objectContaining({
-          method: 'PATCH',
-          body: JSON.stringify({ action: 'cancel' }),
+          method: 'DELETE',
         })
       );
     });
