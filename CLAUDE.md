@@ -27,7 +27,7 @@ TypeScript monorepo for parallel Claude Code worker orchestration.
 
 ## Key Concepts
 
-- **Session Lifecycle**: `registered` → `planning` → `working` → `shipping` → `complete`
+- **Session Lifecycle**: `registered` → `planning` → `planning_complete` → `working` → `shipping` → `pr_ready` → `complete`
 - **Worker Context**: `session-context.json` contains identity and `sessionFilePath`
 - **Status Updates**: Workers modify main session file directly
 
