@@ -16,6 +16,8 @@ export const STATUS_ICONS: Record<SessionStatus, string> = {
   paused: '[||]',
   complete: '[\u2713]',
   cancelled: '[x]',
+  deleting: '[...]',
+  deletion_failed: '[!!]',
 };
 
 /**
@@ -34,6 +36,8 @@ export const STATUS_CSS_CLASSES: Record<SessionStatus, string> = {
   paused: 'bg-yellow-500',
   complete: 'bg-gray-600',
   cancelled: 'bg-gray-600',
+  deleting: 'bg-orange-500',
+  deletion_failed: 'bg-red-700',
 };
 
 /**

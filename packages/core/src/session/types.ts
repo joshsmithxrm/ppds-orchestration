@@ -24,6 +24,8 @@ export const SessionStatus = z.enum([
   'paused',            // Human requested pause
   'complete',          // PR created and CI passed
   'cancelled',         // Human cancelled the session
+  'deleting',          // Cleanup in progress
+  'deletion_failed',   // Worktree cleanup failed
 ]);
 
 export type SessionStatus = z.infer<typeof SessionStatus>;
@@ -105,6 +107,12 @@ export const SessionState = z.object({
 
   /** Stage ID within the workflow (future use). */
   stageId: z.string().optional(),
+
+  /** Error message if deletion failed (only set when status is 'deletion_failed'). */
+  deletionError: z.string().optional(),
+
+  /** Previous status before deletion attempt (for rollback). */
+  previousStatus: SessionStatus.optional(),
 });
 
 export type SessionState = z.infer<typeof SessionState>;
@@ -207,3 +215,50 @@ export type InferredActivity = 'active' | 'stale' | 'unknown';
  * Stale threshold - sessions without heartbeat for this long are considered stale.
  */
 export const STALE_THRESHOLD_MS = 90_000; // 90 seconds
+
+/**
+ * Represents an orphaned worktree (worktree exists without session file).
+ */
+export const OrphanedWorktree = z.object({
+  /** Absolute path to the orphaned worktree. */
+  worktreePath: z.string(),
+
+  /** Branch name extracted from git. */
+  branchName: z.string().optional(),
+
+  /** Issue numbers if session-context.json is recoverable. */
+  issueNumbers: z.array(z.number()).optional(),
+
+  /** Session ID if recoverable from context. */
+  sessionId: z.string().optional(),
+
+  /** When the orphan was detected (ISO timestamp). */
+  detectedAt: z.string().datetime(),
+
+  /** Error message if context reading failed. */
+  contextError: z.string().optional(),
+});
+
+export type OrphanedWorktree = z.infer<typeof OrphanedWorktree>;
+
+/**
+ * Result of a deletion operation.
+ */
+export interface DeleteResult {
+  success: boolean;
+  sessionDeleted: boolean;
+  worktreeRemoved: boolean;
+  error?: string;
+  /** If worktree removal failed, the path that may be orphaned. */
+  orphanedWorktreePath?: string;
+}
+
+/**
+ * Result of a worktree removal attempt.
+ */
+export interface WorktreeRemovalResult {
+  success: boolean;
+  error?: string;
+  /** True if the worktree didn't exist (not an error). */
+  notFound?: boolean;
+}

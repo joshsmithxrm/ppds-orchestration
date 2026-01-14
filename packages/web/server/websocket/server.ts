@@ -79,6 +79,29 @@ export function setupWebSocket(
       console.error('Error broadcasting sessions:', error);
     }
   }, 30000); // Fallback broadcast every 30 seconds (real-time via file watchers)
+
+  // Set up periodic orphan detection broadcast (every 5 minutes)
+  setInterval(async () => {
+    try {
+      const orphans = await multiRepoService.reconcileOrphans();
+      if (orphans.length > 0 || clients.size > 0) {
+        const message = JSON.stringify({
+          type: 'orphans:detected',
+          orphans,
+          count: orphans.length,
+          timestamp: new Date().toISOString(),
+        });
+
+        for (const client of clients) {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(message);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error detecting orphans:', error);
+    }
+  }, 300000); // Check for orphans every 5 minutes
 }
 
 /**

@@ -14,6 +14,8 @@ const STATUS_COLORS: Record<SessionStatus, (s: string) => string> = {
   paused: chalk.yellow,
   complete: chalk.dim,
   cancelled: chalk.dim,
+  deleting: chalk.yellow,
+  deletion_failed: chalk.redBright,
 };
 
 function getColoredStatusText(status: SessionStatus): string {

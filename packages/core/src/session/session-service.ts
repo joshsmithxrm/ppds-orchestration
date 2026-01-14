@@ -12,6 +12,8 @@ import {
   IssueRef,
   getIssueNumbers,
   STALE_THRESHOLD_MS,
+  DeleteResult,
+  WorktreeRemovalResult,
 } from './types.js';
 import { SessionStore } from './session-store.js';
 import { GitUtils } from '../git/git-utils.js';
@@ -148,6 +150,17 @@ export class SessionService {
     }
 
     const worktreePath = path.join(path.dirname(this.config.repoRoot), worktreeName);
+
+    // Check for orphaned worktree before creating
+    if (fs.existsSync(worktreePath) && GitUtils.isWorktree(worktreePath)) {
+      // Worktree exists but we don't have a session for it - it's an orphan
+      const context = await this.store.readSessionContext(worktreePath);
+      const orphanInfo = context?.sessionId ?? 'unknown';
+      throw new Error(
+        `ORPHAN_DETECTED:${worktreePath}:${orphanInfo}:Orphaned worktree exists at ${worktreePath}. ` +
+        `Use cleanupOrphan() to remove it first, or spawn a different issue.`
+      );
+    }
 
     await this.gitUtils.createWorktree(
       worktreePath,
@@ -427,22 +440,180 @@ export class SessionService {
 
   /**
    * Deletes a session and its worktree.
-   * This consolidates the former cancel() and delete() methods.
+   * Implements safe deletion order: worktree first, then session file.
+   * For active sessions, first sets status to 'cancelled' to trigger the
+   * session-watcher to kill the Claude process before removing the worktree.
+   *
+   * @param sessionId - Session to delete
+   * @param options.keepWorktree - If true, don't remove worktree
+   * @param options.force - If true, delete session even if worktree cleanup fails
    */
-  async delete(sessionId: string, options?: { keepWorktree?: boolean }): Promise<void> {
+  async delete(
+    sessionId: string,
+    options?: { keepWorktree?: boolean; force?: boolean }
+  ): Promise<DeleteResult> {
     const session = await this.store.load(sessionId);
 
     if (!session) {
       throw new Error(`Session '${sessionId}' not found`);
     }
 
-    // Remove worktree if it exists and keepWorktree is not true
-    if (!options?.keepWorktree && fs.existsSync(session.worktreePath)) {
-      await this.gitUtils.removeWorktree(session.worktreePath);
+    // If already in deleting state and not forcing, return current state
+    if (session.status === 'deleting' && !options?.force) {
+      return {
+        success: false,
+        sessionDeleted: false,
+        worktreeRemoved: false,
+        error: 'Deletion already in progress',
+      };
     }
 
-    // Remove session file
+    // Save previous status for potential rollback
+    const previousStatus = session.status;
+
+    // For active sessions, first set status to 'cancelled' to trigger the
+    // session-watcher to kill the Claude process
+    const activeStatuses = ['registered', 'planning', 'planning_complete', 'working', 'shipping', 'reviews_in_progress', 'pr_ready', 'stuck', 'paused'];
+    if (activeStatuses.includes(session.status) && !options?.keepWorktree) {
+      const cancelledSession: SessionState = {
+        ...session,
+        status: 'cancelled',
+        lastHeartbeat: new Date().toISOString(),
+      };
+      await this.store.save(cancelledSession);
+
+      // Wait for the session-watcher to detect the status change and kill the process
+      // The watcher polls every 1 second, so 2 seconds should be enough
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+
+    // Transition to deleting state
+    const deletingSession: SessionState = {
+      ...session,
+      status: 'deleting',
+      previousStatus,
+      lastHeartbeat: new Date().toISOString(),
+    };
+    await this.store.save(deletingSession);
+
+    // Attempt worktree removal if requested
+    let worktreeRemoved = false;
+    let worktreeError: string | undefined;
+
+    if (!options?.keepWorktree && fs.existsSync(session.worktreePath)) {
+      const result = await this.gitUtils.removeWorktree(session.worktreePath);
+      worktreeRemoved = result.success;
+      worktreeError = result.error;
+    } else {
+      // Worktree doesn't exist or keepWorktree=true
+      worktreeRemoved = true;
+    }
+
+    // If worktree removal failed and not forcing, transition to deletion_failed
+    if (!worktreeRemoved && !options?.force) {
+      const failedSession: SessionState = {
+        ...session,
+        status: 'deletion_failed',
+        deletionError: worktreeError,
+        previousStatus,
+        lastHeartbeat: new Date().toISOString(),
+      };
+      await this.store.save(failedSession);
+
+      return {
+        success: false,
+        sessionDeleted: false,
+        worktreeRemoved: false,
+        error: worktreeError,
+        orphanedWorktreePath: session.worktreePath,
+      };
+    }
+
+    // Delete session file
     await this.store.delete(sessionId);
+
+    return {
+      success: true,
+      sessionDeleted: true,
+      worktreeRemoved,
+      // If force-deleted with failed worktree, note the potential orphan
+      orphanedWorktreePath: worktreeRemoved ? undefined : session.worktreePath,
+    };
+  }
+
+  /**
+   * Retries deletion for a session in deletion_failed state.
+   */
+  async retryDelete(sessionId: string): Promise<DeleteResult> {
+    const session = await this.store.load(sessionId);
+
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found`);
+    }
+
+    if (session.status !== 'deletion_failed') {
+      throw new Error(`Session '${sessionId}' is not in deletion_failed state`);
+    }
+
+    return this.delete(sessionId);
+  }
+
+  /**
+   * Rolls back a deletion_failed session to its previous state.
+   */
+  async rollbackDeletion(sessionId: string): Promise<SessionState> {
+    const session = await this.store.load(sessionId);
+
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found`);
+    }
+
+    if (session.status !== 'deletion_failed') {
+      throw new Error(`Session '${sessionId}' is not in deletion_failed state`);
+    }
+
+    const previousStatus = session.previousStatus ?? 'stuck';
+
+    const restoredSession: SessionState = {
+      ...session,
+      status: previousStatus,
+      deletionError: undefined,
+      previousStatus: undefined,
+      lastHeartbeat: new Date().toISOString(),
+    };
+
+    await this.store.save(restoredSession);
+    return restoredSession;
+  }
+
+  /**
+   * Cleans up an orphaned worktree (worktree without session file).
+   */
+  async cleanupOrphan(worktreePath: string): Promise<WorktreeRemovalResult> {
+    // Verify it's actually an orphan (worktree exists, no session)
+    if (!fs.existsSync(worktreePath)) {
+      return { success: true, notFound: true }; // Already gone
+    }
+
+    if (!GitUtils.isWorktree(worktreePath)) {
+      return { success: false, error: 'Path is not a git worktree' };
+    }
+
+    // Try to read context to get session ID
+    const context = await this.store.readSessionContext(worktreePath);
+    if (context) {
+      // Check if session actually exists
+      const session = await this.store.load(context.sessionId);
+      if (session) {
+        return {
+          success: false,
+          error: `Session '${context.sessionId}' still exists - use delete() instead`,
+        };
+      }
+    }
+
+    // Remove the worktree
+    return this.gitUtils.removeWorktree(worktreePath);
   }
 
   /**

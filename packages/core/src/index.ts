@@ -34,7 +34,13 @@ export type {
   WorkerSpawnRequest,
   SessionListResult,
   InferredActivity,
+  DeleteResult,
+  WorktreeRemovalResult,
 } from './session/types.js';
+
+// Orphan detection
+export { OrphanedWorktree } from './session/types.js';
+export type { OrphanedWorktree as OrphanedWorktreeType } from './session/types.js';
 
 // Central config types
 export {

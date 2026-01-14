@@ -15,6 +15,8 @@ export const statusColors: Record<string, string> = {
   paused: 'bg-yellow-500',
   complete: 'bg-gray-600',
   cancelled: 'bg-gray-600',
+  deleting: 'bg-orange-500',
+  deletion_failed: 'bg-red-700',
 };
 
 export const statusIcons: Record<string, string> = {
@@ -29,6 +31,8 @@ export const statusIcons: Record<string, string> = {
   paused: '[||]',
   complete: '[\u2713]',
   cancelled: '[x]',
+  deleting: '[...]',
+  deletion_failed: '[!!]',
 };
 
 export const statusTextColors: Record<string, string> = {

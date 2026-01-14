@@ -29,6 +29,22 @@ interface Repo {
   };
 }
 
+interface OrphanedWorktree {
+  worktreePath: string;
+  branchName?: string;
+  issueNumbers?: number[];
+  sessionId?: string;
+  detectedAt: string;
+  contextError?: string;
+}
+
+interface DeletionState {
+  repoId: string;
+  sessionId: string;
+  showForceOption?: boolean;
+  error?: string;
+}
+
 type FilterCategory = 'active' | 'stuck' | 'completed';
 
 function Dashboard() {
@@ -40,9 +56,11 @@ function Dashboard() {
   const [activeFilters, setActiveFilters] = useState<Set<FilterCategory>>(
     new Set(['active', 'stuck'])
   );
-  const [confirmDismiss, setConfirmDismiss] = useState<{ repoId: string; sessionId: string } | null>(null);
+  const [confirmDismiss, setConfirmDismiss] = useState<DeletionState | null>(null);
   const [confirmClearCompleted, setConfirmClearCompleted] = useState(false);
   const [clearingCompleted, setClearingCompleted] = useState(false);
+  const [orphans, setOrphans] = useState<OrphanedWorktree[]>([]);
+  const [cleaningOrphan, setCleaningOrphan] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(true);
   const [, setTick] = useState(0); // Force re-render for elapsed time updates
   const sounds = useSoundsContext();
@@ -93,9 +111,10 @@ function Dashboard() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [sessionsRes, reposRes] = await Promise.all([
+        const [sessionsRes, reposRes, orphansRes] = await Promise.all([
           fetch('/api/sessions?includeCompleted=true'),
           fetch('/api/repos'),
+          fetch('/api/sessions/orphans'),
         ]);
 
         if (!sessionsRes.ok || !reposRes.ok) {
@@ -116,6 +135,12 @@ function Dashboard() {
 
         setSessions(loadedSessions);
         setRepos(reposData.repos || []);
+
+        // Load orphans (non-fatal if it fails)
+        if (orphansRes.ok) {
+          const orphansData = await orphansRes.json();
+          setOrphans(orphansData.orphans || []);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
@@ -184,6 +209,8 @@ function Dashboard() {
               (s) => !(s.id === data.sessionId && s.repoId === data.repoId)
             )
           );
+        } else if (data.type === 'orphans:detected' && data.orphans) {
+          setOrphans(data.orphans);
         }
       };
 
@@ -255,12 +282,40 @@ function Dashboard() {
     setConfirmDismiss({ repoId, sessionId });
   };
 
-  const handleConfirmDismiss = async () => {
+  const handleConfirmDismiss = async (force?: boolean) => {
     if (!confirmDismiss) return;
     const { repoId, sessionId } = confirmDismiss;
     try {
-      const res = await fetch(`/api/sessions/${repoId}/${sessionId}`, {
-        method: 'DELETE',
+      const url = new URL(`/api/sessions/${repoId}/${sessionId}`, window.location.origin);
+      if (force) url.searchParams.set('force', 'true');
+
+      const res = await fetch(url.toString(), { method: 'DELETE' });
+      const data = await res.json();
+
+      if (res.ok) {
+        setSessions((prev) =>
+          prev.filter((s) => !(s.id === sessionId && s.repoId === repoId))
+        );
+        setConfirmDismiss(null);
+      } else if (data.deletionFailed) {
+        // Show force delete option
+        setConfirmDismiss({
+          repoId,
+          sessionId,
+          showForceOption: true,
+          error: data.error,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to dismiss session:', err);
+      setConfirmDismiss(null);
+    }
+  };
+
+  const handleRetryDelete = async (repoId: string, sessionId: string) => {
+    try {
+      const res = await fetch(`/api/sessions/${repoId}/${sessionId}/retry-delete`, {
+        method: 'PATCH',
       });
       if (res.ok) {
         setSessions((prev) =>
@@ -268,9 +323,45 @@ function Dashboard() {
         );
       }
     } catch (err) {
-      console.error('Failed to dismiss session:', err);
+      console.error('Failed to retry deletion:', err);
+    }
+  };
+
+  const handleRollbackDelete = async (repoId: string, sessionId: string) => {
+    try {
+      const res = await fetch(`/api/sessions/${repoId}/${sessionId}/rollback-delete`, {
+        method: 'PATCH',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === sessionId && s.repoId === repoId
+              ? { ...s, ...data.session }
+              : s
+          )
+        );
+      }
+    } catch (err) {
+      console.error('Failed to rollback deletion:', err);
+    }
+  };
+
+  const handleCleanupOrphan = async (repoId: string, worktreePath: string) => {
+    setCleaningOrphan(worktreePath);
+    try {
+      const res = await fetch(`/api/sessions/orphans/${repoId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ worktreePath }),
+      });
+      if (res.ok) {
+        setOrphans((prev) => prev.filter((o) => o.worktreePath !== worktreePath));
+      }
+    } catch (err) {
+      console.error('Failed to cleanup orphan:', err);
     } finally {
-      setConfirmDismiss(null);
+      setCleaningOrphan(null);
     }
   };
 
@@ -409,6 +500,57 @@ function Dashboard() {
         </div>
       )}
 
+      {/* Orphaned Worktrees Warning */}
+      {orphans.length > 0 && (
+        <div className="bg-orange-900/30 border border-orange-700 rounded-lg p-4">
+          <h3 className="text-orange-400 font-semibold flex items-center gap-2 mb-3">
+            <span>[?]</span> {orphans.length} orphaned worktree(s) detected
+          </h3>
+          <p className="text-sm text-orange-300 mb-3">
+            These worktrees exist without corresponding session files. They may contain uncommitted work.
+          </p>
+          <div className="space-y-2">
+            {orphans.map((orphan) => {
+              const displayName = orphan.worktreePath.split(/[/\\]/).pop() || orphan.worktreePath;
+              return (
+                <div
+                  key={orphan.worktreePath}
+                  className="flex items-center justify-between bg-orange-900/20 rounded px-3 py-2"
+                >
+                  <div>
+                    <div className="text-sm text-orange-200 font-mono">{displayName}</div>
+                    {orphan.issueNumbers && orphan.issueNumbers.length > 0 && (
+                      <div className="text-xs text-orange-400">
+                        Issues: {orphan.issueNumbers.map((n) => `#${n}`).join(', ')}
+                      </div>
+                    )}
+                    {orphan.branchName && (
+                      <div className="text-xs text-gray-500">Branch: {orphan.branchName}</div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      // Extract repoId from path - worktree naming convention: {prefix}issue-{n}
+                      // The repo is determined by matching against configured repos
+                      const matchingRepo = repos.find((r) =>
+                        orphan.worktreePath.toLowerCase().includes(r.id.toLowerCase())
+                      );
+                      if (matchingRepo) {
+                        handleCleanupOrphan(matchingRepo.id, orphan.worktreePath);
+                      }
+                    }}
+                    disabled={cleaningOrphan === orphan.worktreePath}
+                    className="text-sm px-3 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded disabled:opacity-50 transition-colors"
+                  >
+                    {cleaningOrphan === orphan.worktreePath ? 'Cleaning...' : 'Cleanup'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Sessions List */}
       <div className="bg-ppds-card rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
@@ -469,7 +611,32 @@ function Dashboard() {
                         {session.branch}
                       </div>
                     </div>
-                    {['complete', 'cancelled'].includes(session.status) && (
+                    {session.status === 'deletion_failed' ? (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleRetryDelete(session.repoId, session.id);
+                          }}
+                          className="text-xs px-2 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
+                          title="Retry deletion"
+                        >
+                          Retry
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleRollbackDelete(session.repoId, session.id);
+                          }}
+                          className="text-xs px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white rounded transition-colors"
+                          title="Cancel deletion"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : ['complete', 'cancelled'].includes(session.status) && (
                       <button
                         onClick={(e) => handleDismissClick(session.repoId, session.id, e)}
                         className="text-gray-400 hover:text-red-400 hover:bg-red-900/30 transition-colors p-2 rounded"
@@ -503,11 +670,15 @@ function Dashboard() {
       {/* Confirm Dismiss Dialog */}
       <ConfirmDialog
         isOpen={confirmDismiss !== null}
-        title="Dismiss Session"
-        message="Are you sure you want to dismiss this session? This will remove it from the list."
-        confirmLabel="Dismiss"
+        title={confirmDismiss?.showForceOption ? 'Deletion Failed' : 'Dismiss Session'}
+        message={
+          confirmDismiss?.showForceOption
+            ? `Worktree cleanup failed: ${confirmDismiss.error || 'Unknown error'}. Force delete will remove the session but leave the worktree orphaned.`
+            : 'Are you sure you want to dismiss this session? This will remove it from the list.'
+        }
+        confirmLabel={confirmDismiss?.showForceOption ? 'Force Delete' : 'Dismiss'}
         variant="danger"
-        onConfirm={handleConfirmDismiss}
+        onConfirm={() => handleConfirmDismiss(confirmDismiss?.showForceOption)}
         onCancel={() => setConfirmDismiss(null)}
       />
 

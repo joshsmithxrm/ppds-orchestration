@@ -1,6 +1,7 @@
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import RalphStatus from '../components/RalphStatus';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 interface SessionDetail {
   id: string;
@@ -25,16 +26,27 @@ interface SessionDetail {
   };
 }
 
+interface DeleteDialogState {
+  isOpen: boolean;
+  showForceOption?: boolean;
+  error?: string;
+}
+
 function SessionView() {
   const { repoId, sessionId } = useParams<{
     repoId: string;
     sessionId: string;
   }>();
+  const navigate = useNavigate();
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
+  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState>({ isOpen: false });
+  const [deleted, setDeleted] = useState(false);
 
   useEffect(() => {
+    if (deleted) return; // Stop polling after deletion
+
     const fetchSession = async () => {
       try {
         const res = await fetch(`/api/sessions/${repoId}/${sessionId}`);
@@ -54,7 +66,7 @@ function SessionView() {
     // Poll for updates every 5 seconds for active sessions
     const interval = setInterval(fetchSession, 5000);
     return () => clearInterval(interval);
-  }, [repoId, sessionId]);
+  }, [repoId, sessionId, deleted]);
 
   const handleForward = async () => {
     if (!message.trim()) return;
@@ -75,7 +87,7 @@ function SessionView() {
     }
   };
 
-  const handleAction = async (action: 'pause' | 'resume' | 'cancel') => {
+  const handleAction = async (action: 'pause' | 'resume') => {
     try {
       const res = await fetch(`/api/sessions/${repoId}/${sessionId}`, {
         method: 'PATCH',
@@ -88,6 +100,59 @@ function SessionView() {
       }
     } catch (err) {
       console.error(`Failed to ${action} session:`, err);
+    }
+  };
+
+  const handleDelete = async (force?: boolean) => {
+    try {
+      const url = new URL(`/api/sessions/${repoId}/${sessionId}`, window.location.origin);
+      if (force) url.searchParams.set('force', 'true');
+
+      const res = await fetch(url.toString(), { method: 'DELETE' });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setDeleted(true);
+        setDeleteDialog({ isOpen: false });
+        navigate('/');
+      } else if (data.deletionFailed) {
+        setDeleteDialog({
+          isOpen: true,
+          showForceOption: true,
+          error: data.error,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+      setDeleteDialog({ isOpen: false });
+    }
+  };
+
+  const handleRetryDelete = async () => {
+    try {
+      const res = await fetch(`/api/sessions/${repoId}/${sessionId}/retry-delete`, {
+        method: 'PATCH',
+      });
+      if (res.ok) {
+        setDeleted(true);
+        navigate('/');
+      }
+    } catch (err) {
+      console.error('Failed to retry deletion:', err);
+    }
+  };
+
+  const handleRollbackDelete = async () => {
+    try {
+      const res = await fetch(`/api/sessions/${repoId}/${sessionId}/rollback-delete`, {
+        method: 'PATCH',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSession(data.session);
+      }
+    } catch (err) {
+      console.error('Failed to rollback deletion:', err);
     }
   };
 
@@ -251,28 +316,69 @@ function SessionView() {
 
       {/* Actions */}
       <div className="flex gap-3">
-        {session.status === 'paused' ? (
-          <button
-            onClick={() => handleAction('resume')}
-            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500"
-          >
-            Resume
-          </button>
+        {session.status === 'deletion_failed' ? (
+          <>
+            <button
+              onClick={handleRetryDelete}
+              className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-500"
+            >
+              Retry Delete
+            </button>
+            <button
+              onClick={handleRollbackDelete}
+              className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-500"
+            >
+              Cancel Delete
+            </button>
+          </>
         ) : (
-          <button
-            onClick={() => handleAction('pause')}
-            className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-500"
-          >
-            Pause
-          </button>
+          <>
+            {session.status === 'paused' ? (
+              <button
+                onClick={() => handleAction('resume')}
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500"
+              >
+                Resume
+              </button>
+            ) : session.status !== 'deleting' && (
+              <button
+                onClick={() => handleAction('pause')}
+                className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-500"
+              >
+                Pause
+              </button>
+            )}
+            {session.status !== 'deleting' && (
+              <button
+                onClick={() => setDeleteDialog({ isOpen: true })}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500"
+              >
+                Delete
+              </button>
+            )}
+            {session.status === 'deleting' && (
+              <span className="px-4 py-2 bg-orange-600 text-white rounded opacity-75">
+                Deleting...
+              </span>
+            )}
+          </>
         )}
-        <button
-          onClick={() => handleAction('cancel')}
-          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500"
-        >
-          Cancel
-        </button>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={deleteDialog.isOpen}
+        title={deleteDialog.showForceOption ? 'Deletion Failed' : 'Delete Session'}
+        message={
+          deleteDialog.showForceOption
+            ? `Worktree cleanup failed: ${deleteDialog.error || 'Unknown error'}. Force delete will remove the session but leave the worktree orphaned.`
+            : 'Are you sure you want to delete this session? This will remove the worktree and all uncommitted changes.'
+        }
+        confirmLabel={deleteDialog.showForceOption ? 'Force Delete' : 'Delete'}
+        variant="danger"
+        onConfirm={() => handleDelete(deleteDialog.showForceOption)}
+        onCancel={() => setDeleteDialog({ isOpen: false })}
+      />
     </div>
   );
 }
