@@ -24,9 +24,27 @@ export const SessionStatus = z.enum([
   'paused',            // Human requested pause
   'complete',          // PR created and CI passed
   'cancelled',         // Human cancelled the session
+  'deleting',          // Cleanup in progress
+  'deletion_failed',   // Worktree cleanup failed
 ]);
 
 export type SessionStatus = z.infer<typeof SessionStatus>;
+
+/**
+ * Reference to a GitHub issue.
+ */
+export const IssueRef = z.object({
+  /** GitHub issue number. */
+  number: z.number(),
+
+  /** Issue title from GitHub. */
+  title: z.string(),
+
+  /** Issue body/description (optional, used for prompt generation). */
+  body: z.string().optional(),
+});
+
+export type IssueRef = z.infer<typeof IssueRef>;
 
 /**
  * Git worktree status information.
@@ -48,14 +66,11 @@ export type WorktreeStatus = z.infer<typeof WorktreeStatus>;
  * This is the orchestrator's view of the session, stored in ~/.orchestration/{project}/sessions/.
  */
 export const SessionState = z.object({
-  /** Unique session identifier (typically the issue number as string). */
+  /** Unique session identifier (primary issue number as string, or UUID for workflows). */
   id: z.string(),
 
-  /** GitHub issue number this session is working on. */
-  issueNumber: z.number(),
-
-  /** Issue title from GitHub. */
-  issueTitle: z.string(),
+  /** All GitHub issues this session is working on. First issue is the primary. */
+  issues: z.array(IssueRef).min(1),
 
   /** Current session status. */
   status: SessionStatus,
@@ -86,9 +101,35 @@ export const SessionState = z.object({
 
   /** Git status summary for the worktree. */
   worktreeStatus: WorktreeStatus.optional(),
+
+  /** Workflow ID if this session is part of a workflow (future use). */
+  workflowId: z.string().optional(),
+
+  /** Stage ID within the workflow (future use). */
+  stageId: z.string().optional(),
+
+  /** Error message if deletion failed (only set when status is 'deletion_failed'). */
+  deletionError: z.string().optional(),
+
+  /** Previous status before deletion attempt (for rollback). */
+  previousStatus: SessionStatus.optional(),
 });
 
 export type SessionState = z.infer<typeof SessionState>;
+
+/**
+ * Helper to get the primary issue from a session.
+ */
+export function getPrimaryIssue(session: SessionState): IssueRef {
+  return session.issues[0];
+}
+
+/**
+ * Helper to get all issue numbers from a session.
+ */
+export function getIssueNumbers(session: SessionState): number[] {
+  return session.issues.map(i => i.number);
+}
 
 /**
  * Static context written to the worktree at spawn time.
@@ -98,11 +139,8 @@ export const SessionContext = z.object({
   /** Unique session identifier. */
   sessionId: z.string(),
 
-  /** GitHub issue number. */
-  issueNumber: z.number(),
-
-  /** Issue title. */
-  issueTitle: z.string(),
+  /** All GitHub issues this session is working on. */
+  issues: z.array(IssueRef).min(1),
 
   /** GitHub repository info. */
   github: z.object({
@@ -153,8 +191,7 @@ export type SessionDynamicState = z.infer<typeof SessionDynamicState>;
  */
 export interface WorkerSpawnRequest {
   sessionId: string;
-  issueNumber: number;
-  issueTitle: string;
+  issues: IssueRef[];
   workingDirectory: string;
   promptFilePath: string;
   githubOwner: string;
@@ -178,3 +215,50 @@ export type InferredActivity = 'active' | 'stale' | 'unknown';
  * Stale threshold - sessions without heartbeat for this long are considered stale.
  */
 export const STALE_THRESHOLD_MS = 90_000; // 90 seconds
+
+/**
+ * Represents an orphaned worktree (worktree exists without session file).
+ */
+export const OrphanedWorktree = z.object({
+  /** Absolute path to the orphaned worktree. */
+  worktreePath: z.string(),
+
+  /** Branch name extracted from git. */
+  branchName: z.string().optional(),
+
+  /** Issue numbers if session-context.json is recoverable. */
+  issueNumbers: z.array(z.number()).optional(),
+
+  /** Session ID if recoverable from context. */
+  sessionId: z.string().optional(),
+
+  /** When the orphan was detected (ISO timestamp). */
+  detectedAt: z.string().datetime(),
+
+  /** Error message if context reading failed. */
+  contextError: z.string().optional(),
+});
+
+export type OrphanedWorktree = z.infer<typeof OrphanedWorktree>;
+
+/**
+ * Result of a deletion operation.
+ */
+export interface DeleteResult {
+  success: boolean;
+  sessionDeleted: boolean;
+  worktreeRemoved: boolean;
+  error?: string;
+  /** If worktree removal failed, the path that may be orphaned. */
+  orphanedWorktreePath?: string;
+}
+
+/**
+ * Result of a worktree removal attempt.
+ */
+export interface WorktreeRemovalResult {
+  success: boolean;
+  error?: string;
+  /** True if the worktree didn't exist (not an error). */
+  notFound?: boolean;
+}

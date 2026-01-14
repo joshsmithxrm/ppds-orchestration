@@ -1,6 +1,6 @@
 # Debug Dashboard
 
-Diagnose and fix issues in the dashboard using Playwright MCP tools.
+Diagnose and fix issues in the web dashboard using Playwright MCP tools.
 
 ## Usage
 
@@ -21,16 +21,16 @@ Based on the argument provided ($ARGUMENTS), diagnose and fix dashboard issues.
 
 ### Step 1: Check dev server status
 
-First, verify the dashboard dev server is running on port 1420:
+First, verify the web dev server is running on port 5173:
 
 ```bash
-# Windows - check if port 1420 is in use
-netstat -ano | findstr :1420
+# Windows - check if port 5173 is in use
+netstat -ano | findstr :5173
 ```
 
 If the server is NOT running, start it in the background:
 ```bash
-cd packages/dashboard && npm run dev
+npm run dev -w packages/web
 ```
 
 Wait a few seconds for the server to start.
@@ -39,7 +39,7 @@ Wait a few seconds for the server to start.
 
 Use Playwright MCP to open the dashboard:
 
-1. Call `playwright_navigate` with URL `http://localhost:1420`
+1. Call `playwright_navigate` with URL `http://localhost:5173`
 2. Wait for the page to fully load
 
 ### Step 3: Capture diagnostic data
@@ -64,11 +64,11 @@ Common issues and their causes:
 
 | Error Pattern | Likely Cause | Solution |
 |---------------|--------------|----------|
-| `invoke` undefined | Running in browser without Tauri | Verify tauri-mock.ts is being used |
 | Blank page | Import/syntax error | Check console for module errors |
 | Missing styles | Tailwind not loading | Check postcss/tailwind config |
 | "Module not found" | Missing dependency | Run `npm install` |
-| Network errors | Backend not running | Check Tauri backend logs |
+| Network errors | Backend not running | Check if both server and client are running |
+| API fetch failed | Backend API endpoint error | Check server logs |
 
 ### Step 6: Fix and verify
 
@@ -88,17 +88,18 @@ Summarize:
 
 ## Notes
 
-- The dashboard runs on `http://localhost:1420` (Vite dev server)
-- When not running inside Tauri, the dashboard uses mock data from `src/lib/tauri-mock.ts`
-- A "Dev Mode" badge appears in the header when running in browser-only mode
-- For full Tauri functionality, use `npm run tauri:dev` instead of `npm run dev`
+- The web dashboard runs two processes: Vite frontend (port 5173) and Express backend (port 3847)
+- Use `npm run dev -w packages/web` to start both concurrently
+- Access via Vite port (5173), not backend port (3847)
+- WebSocket real-time updates may not work in dev mode (use production build for full testing)
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `packages/dashboard/src/App.tsx` | Main React component |
-| `packages/dashboard/src/lib/tauri-mock.ts` | Tauri API wrapper with mock fallback |
-| `packages/dashboard/src/types.ts` | TypeScript interfaces |
-| `packages/dashboard/src/components/` | UI components |
-| `packages/dashboard/vite.config.ts` | Vite configuration |
+| `packages/web/src/App.tsx` | Main React component |
+| `packages/web/src/pages/Dashboard.tsx` | Dashboard page component |
+| `packages/web/src/components/` | UI components |
+| `packages/web/server/index.ts` | Express backend server |
+| `packages/web/server/routes/` | API route handlers |
+| `packages/web/vite.config.ts` | Vite configuration |

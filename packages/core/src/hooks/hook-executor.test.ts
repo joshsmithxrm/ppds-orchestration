@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as os from 'node:os';
 import { HookExecutor } from './hook-executor.js';
-import type { SessionState } from '../session/types.js';
+import type { SessionState, IssueRef } from '../session/types.js';
 import type { HookConfig } from '../config/central-config.js';
 
 // Use PowerShell-compatible commands for Windows
@@ -15,10 +15,15 @@ const tempDir = os.tmpdir();
 describe('HookExecutor', () => {
   let executor: HookExecutor;
 
+  const mockIssue: IssueRef = {
+    number: 123,
+    title: 'Test Issue',
+    body: 'Test issue description',
+  };
+
   const mockSession: SessionState = {
     id: '123',
-    issueNumber: 123,
-    issueTitle: 'Test Issue',
+    issues: [mockIssue],
     status: 'working',
     mode: 'single',
     branch: 'issue-123',

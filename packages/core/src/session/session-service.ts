@@ -9,12 +9,17 @@ import {
   SessionListResult,
   WorktreeStatus,
   ExecutionMode,
+  IssueRef,
+  getIssueNumbers,
   STALE_THRESHOLD_MS,
+  DeleteResult,
+  WorktreeRemovalResult,
 } from './types.js';
 import { SessionStore } from './session-store.js';
 import { GitUtils } from '../git/git-utils.js';
 import { WorkerSpawner } from '../spawner/worker-spawner.js';
 import { createSpawner } from '../spawner/windows-terminal-spawner.js';
+import { WorkerPromptBuilder } from './worker-prompt-builder.js';
 
 export interface SessionServiceConfig {
   /** Name of the project (used for session storage path). */
@@ -63,6 +68,7 @@ export class SessionService {
   private readonly store: SessionStore;
   private readonly gitUtils: GitUtils;
   private readonly spawner: WorkerSpawner;
+  private readonly promptBuilder: WorkerPromptBuilder;
   private readonly config: SessionServiceConfig;
 
   constructor(config: SessionServiceConfig) {
@@ -70,23 +76,50 @@ export class SessionService {
     this.store = new SessionStore(config.projectName, config.baseDir);
     this.gitUtils = new GitUtils(config.repoRoot);
     this.spawner = config.spawner ?? createSpawner();
+    this.promptBuilder = new WorkerPromptBuilder();
   }
 
   /**
-   * Spawns a new worker session for an issue.
+   * Spawns a new worker session for one or more issues.
+   * @param issueNumbers - Single issue number or array of issue numbers
+   * @param options - Spawn options
    */
-  async spawn(issueNumber: number, options?: SpawnOptions): Promise<SessionState> {
-    const sessionId = issueNumber.toString();
+  async spawn(issueNumbers: number | number[], options?: SpawnOptions): Promise<SessionState> {
+    // Normalize to array
+    const issueNums = Array.isArray(issueNumbers) ? issueNumbers : [issueNumbers];
+
+    if (issueNums.length === 0) {
+      throw new Error('At least one issue number is required');
+    }
+
+    const primaryIssue = issueNums[0];
+    const sessionId = primaryIssue.toString();
     const mode = options?.mode ?? 'single';
 
-    // Check if session already exists and is still active
-    if (this.store.exists(sessionId)) {
-      const existing = await this.store.load(sessionId);
-      if (existing && existing.status !== 'complete' && existing.status !== 'cancelled') {
-        throw new Error(`Session for issue #${issueNumber} already exists (status: ${existing.status})`);
+    // Check for overlap with existing combined sessions
+    // (e.g., if session [2,4,5] exists and we try to spawn [1,2,3], issue #2 conflicts)
+    const allSessions = await this.store.listAll();
+    for (const existing of allSessions) {
+      if (existing.status === 'complete' || existing.status === 'cancelled') continue;
+      const existingIssues = getIssueNumbers(existing);
+      const overlap = issueNums.filter(n => existingIssues.includes(n));
+      if (overlap.length > 0) {
+        throw new Error(
+          `Issue(s) ${overlap.map(n => `#${n}`).join(', ')} already in active session '${existing.id}'`
+        );
       }
-      // Session is complete/cancelled - allow re-spawn by deleting old session
-      await this.store.delete(sessionId);
+    }
+
+    // Clean up any completed/cancelled sessions with matching IDs
+    for (const issueNum of issueNums) {
+      const existingId = issueNum.toString();
+      if (this.store.exists(existingId)) {
+        const existing = await this.store.load(existingId);
+        if (existing && (existing.status === 'complete' || existing.status === 'cancelled')) {
+          // Session is complete/cancelled - allow re-spawn by deleting old session
+          await this.store.delete(existingId);
+        }
+      }
     }
 
     // Check spawner availability
@@ -94,14 +127,40 @@ export class SessionService {
       throw new Error(`Worker spawner (${this.spawner.getName()}) is not available`);
     }
 
-    // Fetch issue from GitHub
-    const issueInfo = await this.fetchIssue(issueNumber);
+    // Fetch all issues from GitHub in parallel
+    const issueInfos = await Promise.all(
+      issueNums.map(async (num) => {
+        const info = await this.fetchIssue(num);
+        return { number: num, title: info.title, body: info.body };
+      })
+    );
 
-    // Create worktree
-    const worktreePrefix = this.config.worktreePrefix ?? `${path.basename(this.config.repoRoot)}-issue-`;
-    const worktreeName = `${worktreePrefix}${issueNumber}`;
-    const branchName = `issue-${issueNumber}`;
+    // Generate branch and worktree names based on issue count
+    const worktreePrefix = this.config.worktreePrefix ?? `${path.basename(this.config.repoRoot)}-`;
+    let branchName: string;
+    let worktreeName: string;
+
+    if (issueNums.length === 1) {
+      branchName = `issue-${primaryIssue}`;
+      worktreeName = `${worktreePrefix}issue-${primaryIssue}`;
+    } else {
+      const issuesSuffix = issueNums.join('-');
+      branchName = `issues-${issuesSuffix}`;
+      worktreeName = `${worktreePrefix}issues-${issuesSuffix}`;
+    }
+
     const worktreePath = path.join(path.dirname(this.config.repoRoot), worktreeName);
+
+    // Check for orphaned worktree before creating
+    if (fs.existsSync(worktreePath) && GitUtils.isWorktree(worktreePath)) {
+      // Worktree exists but we don't have a session for it - it's an orphan
+      const context = await this.store.readSessionContext(worktreePath);
+      const orphanInfo = context?.sessionId ?? 'unknown';
+      throw new Error(
+        `ORPHAN_DETECTED:${worktreePath}:${orphanInfo}:Orphaned worktree exists at ${worktreePath}. ` +
+        `Use cleanupOrphan() to remove it first, or spawn a different issue.`
+      );
+    }
 
     await this.gitUtils.createWorktree(
       worktreePath,
@@ -112,9 +171,7 @@ export class SessionService {
     // Write worker prompt
     const promptPath = await this.writeWorkerPrompt(
       worktreePath,
-      issueNumber,
-      issueInfo.title,
-      issueInfo.body,
+      issueInfos,
       branchName,
       mode,
       options?.additionalPromptSections
@@ -125,8 +182,7 @@ export class SessionService {
     const sessionFilePath = this.store.getSessionFilePath(sessionId);
     const context: SessionContext = {
       sessionId,
-      issueNumber,
-      issueTitle: issueInfo.title,
+      issues: issueInfos,
       github: {
         owner: this.config.githubOwner,
         repo: this.config.githubRepo,
@@ -134,8 +190,8 @@ export class SessionService {
       branch: branchName,
       worktreePath,
       commands: {
-        update: `orch update --id ${issueNumber}`,
-        heartbeat: `orch heartbeat --id ${issueNumber}`,
+        update: `orch update --id ${primaryIssue}`,
+        heartbeat: `orch heartbeat --id ${primaryIssue}`,
       },
       spawnedAt: now,
       sessionFilePath,
@@ -145,8 +201,7 @@ export class SessionService {
     // Register session
     const session: SessionState = {
       id: sessionId,
-      issueNumber,
-      issueTitle: issueInfo.title,
+      issues: issueInfos,
       status: 'registered',
       mode,
       branch: branchName,
@@ -160,8 +215,7 @@ export class SessionService {
     // Spawn worker
     const spawnResult = await this.spawner.spawn({
       sessionId,
-      issueNumber,
-      issueTitle: issueInfo.title,
+      issues: issueInfos,
       workingDirectory: worktreePath,
       promptFilePath: promptPath,
       githubOwner: this.config.githubOwner,
@@ -187,16 +241,76 @@ export class SessionService {
   }
 
   /**
-   * Lists active sessions.
+   * Restarts a stuck session by spawning a fresh worker in the existing worktree.
+   * The worker will see any forwarded guidance and continue from the current state.
+   */
+  async restart(sessionId: string): Promise<SessionState> {
+    const session = await this.store.load(sessionId);
+
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found`);
+    }
+
+    if (session.status !== 'stuck') {
+      throw new Error(`Can only restart stuck sessions (current status: ${session.status})`);
+    }
+
+    // Check spawner availability
+    if (!this.spawner.isAvailable()) {
+      throw new Error(`Worker spawner (${this.spawner.getName()}) is not available`);
+    }
+
+    // Verify worktree still exists
+    if (!fs.existsSync(session.worktreePath)) {
+      throw new Error(`Worktree no longer exists at ${session.worktreePath}`);
+    }
+
+    // Re-read the prompt file path
+    const promptPath = path.join(session.worktreePath, '.claude', 'session-prompt.md');
+    if (!fs.existsSync(promptPath)) {
+      throw new Error(`Worker prompt not found at ${promptPath}`);
+    }
+
+    // Spawn a fresh worker in the existing worktree
+    const spawnResult = await this.spawner.spawn({
+      sessionId,
+      issues: session.issues,
+      workingDirectory: session.worktreePath,
+      promptFilePath: promptPath,
+      githubOwner: this.config.githubOwner,
+      githubRepo: this.config.githubRepo,
+    });
+
+    if (!spawnResult.success) {
+      throw new Error(spawnResult.error ?? 'Failed to restart worker');
+    }
+
+    // Update status back to working
+    const updatedSession: SessionState = {
+      ...session,
+      status: 'working',
+      stuckReason: undefined, // Clear the stuck reason
+      lastHeartbeat: new Date().toISOString(),
+    };
+    await this.store.save(updatedSession);
+
+    return updatedSession;
+  }
+
+  /**
+   * Lists all sessions (including completed).
    */
   async list(): Promise<SessionState[]> {
-    const sessions = await this.store.listActive();
+    const sessions = await this.store.listAll();
 
     // Clean up orphaned sessions (worktrees that no longer exist)
     const validSessions: SessionState[] = [];
 
     for (const session of sessions) {
-      if (fs.existsSync(session.worktreePath)) {
+      // For completed/cancelled sessions, keep them even if worktree is gone
+      if (session.status === 'complete' || session.status === 'cancelled') {
+        validSessions.push(session);
+      } else if (fs.existsSync(session.worktreePath)) {
         validSessions.push(session);
       } else {
         // Worktree was removed externally, clean up session
@@ -208,20 +322,31 @@ export class SessionService {
   }
 
   /**
+   * Lists only running sessions (excludes complete/cancelled).
+   */
+  async listRunning(): Promise<SessionState[]> {
+    const allSessions = await this.list();
+    return allSessions.filter(s => s.status !== 'complete' && s.status !== 'cancelled');
+  }
+
+  /**
    * Lists sessions with cleanup info.
    */
   async listWithCleanupInfo(): Promise<SessionListResult> {
-    const sessions = await this.store.listActive();
+    const sessions = await this.store.listAll();
     const validSessions: SessionState[] = [];
     const cleanedIssueNumbers: number[] = [];
 
     for (const session of sessions) {
-      if (fs.existsSync(session.worktreePath)) {
+      // For completed/cancelled sessions, keep them even if worktree is gone
+      if (session.status === 'complete' || session.status === 'cancelled') {
+        validSessions.push(session);
+      } else if (fs.existsSync(session.worktreePath)) {
         validSessions.push(session);
       } else {
         // Worktree was removed externally, clean up session
         await this.store.delete(session.id);
-        cleanedIssueNumbers.push(session.issueNumber);
+        cleanedIssueNumbers.push(...getIssueNumbers(session));
       }
     }
 
@@ -281,6 +406,14 @@ export class SessionService {
       throw new Error(`Session '${sessionId}' not found`);
     }
 
+    // Cannot pause completed or cancelled sessions
+    if (session.status === 'complete') {
+      throw new Error('Cannot pause a completed session');
+    }
+    if (session.status === 'cancelled') {
+      throw new Error('Cannot pause a cancelled session');
+    }
+
     if (session.status === 'paused') {
       return session; // Already paused
     }
@@ -306,42 +439,181 @@ export class SessionService {
   }
 
   /**
-   * Cancels a session.
+   * Deletes a session and its worktree.
+   * Implements safe deletion order: worktree first, then session file.
+   * For active sessions, first sets status to 'cancelled' to trigger the
+   * session-watcher to kill the Claude process before removing the worktree.
+   *
+   * @param sessionId - Session to delete
+   * @param options.keepWorktree - If true, don't remove worktree
+   * @param options.force - If true, delete session even if worktree cleanup fails
    */
-  async cancel(sessionId: string, options?: { keepWorktree?: boolean }): Promise<void> {
+  async delete(
+    sessionId: string,
+    options?: { keepWorktree?: boolean; force?: boolean }
+  ): Promise<DeleteResult> {
     const session = await this.store.load(sessionId);
 
     if (!session) {
       throw new Error(`Session '${sessionId}' not found`);
     }
 
-    // Skip intermediate 'cancelled' status update - delete directly to avoid
-    // race condition where watcher broadcasts 'cancelled' before deletion
-
-    // Remove worktree unless keepWorktree is true
-    if (!options?.keepWorktree && fs.existsSync(session.worktreePath)) {
-      await this.gitUtils.removeWorktree(session.worktreePath);
+    // If already in deleting state and not forcing, return current state
+    if (session.status === 'deleting' && !options?.force) {
+      return {
+        success: false,
+        sessionDeleted: false,
+        worktreeRemoved: false,
+        error: 'Deletion already in progress',
+      };
     }
 
-    // Remove session file
+    // Save previous status for potential rollback
+    const previousStatus = session.status;
+
+    // For active sessions, first set status to 'cancelled' to trigger the
+    // session-watcher to kill the Claude process
+    const activeStatuses = ['registered', 'planning', 'planning_complete', 'working', 'shipping', 'reviews_in_progress', 'pr_ready', 'stuck', 'paused'];
+    if (activeStatuses.includes(session.status) && !options?.keepWorktree) {
+      const cancelledSession: SessionState = {
+        ...session,
+        status: 'cancelled',
+        lastHeartbeat: new Date().toISOString(),
+      };
+      await this.store.save(cancelledSession);
+
+      // Wait for the session-watcher to detect the status change and kill the process
+      // The watcher polls every 1 second, so 2 seconds should be enough
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+
+    // Transition to deleting state
+    const deletingSession: SessionState = {
+      ...session,
+      status: 'deleting',
+      previousStatus,
+      lastHeartbeat: new Date().toISOString(),
+    };
+    await this.store.save(deletingSession);
+
+    // Attempt worktree removal if requested
+    let worktreeRemoved = false;
+    let worktreeError: string | undefined;
+
+    if (!options?.keepWorktree && fs.existsSync(session.worktreePath)) {
+      const result = await this.gitUtils.removeWorktree(session.worktreePath);
+      worktreeRemoved = result.success;
+      worktreeError = result.error;
+    } else {
+      // Worktree doesn't exist or keepWorktree=true
+      worktreeRemoved = true;
+    }
+
+    // If worktree removal failed and not forcing, transition to deletion_failed
+    if (!worktreeRemoved && !options?.force) {
+      const failedSession: SessionState = {
+        ...session,
+        status: 'deletion_failed',
+        deletionError: worktreeError,
+        previousStatus,
+        lastHeartbeat: new Date().toISOString(),
+      };
+      await this.store.save(failedSession);
+
+      return {
+        success: false,
+        sessionDeleted: false,
+        worktreeRemoved: false,
+        error: worktreeError,
+        orphanedWorktreePath: session.worktreePath,
+      };
+    }
+
+    // Delete session file
     await this.store.delete(sessionId);
+
+    return {
+      success: true,
+      sessionDeleted: true,
+      worktreeRemoved,
+      // If force-deleted with failed worktree, note the potential orphan
+      orphanedWorktreePath: worktreeRemoved ? undefined : session.worktreePath,
+    };
   }
 
   /**
-   * Cancels all active sessions.
+   * Retries deletion for a session in deletion_failed state.
    */
-  async cancelAll(options?: { keepWorktrees?: boolean }): Promise<number> {
-    const sessions = await this.list();
-    let count = 0;
+  async retryDelete(sessionId: string): Promise<DeleteResult> {
+    const session = await this.store.load(sessionId);
 
-    for (const session of sessions) {
-      if (['working', 'stuck', 'paused', 'registered', 'planning', 'planning_complete'].includes(session.status)) {
-        await this.cancel(session.id, { keepWorktree: options?.keepWorktrees });
-        count++;
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found`);
+    }
+
+    if (session.status !== 'deletion_failed') {
+      throw new Error(`Session '${sessionId}' is not in deletion_failed state`);
+    }
+
+    return this.delete(sessionId);
+  }
+
+  /**
+   * Rolls back a deletion_failed session to its previous state.
+   */
+  async rollbackDeletion(sessionId: string): Promise<SessionState> {
+    const session = await this.store.load(sessionId);
+
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found`);
+    }
+
+    if (session.status !== 'deletion_failed') {
+      throw new Error(`Session '${sessionId}' is not in deletion_failed state`);
+    }
+
+    const previousStatus = session.previousStatus ?? 'stuck';
+
+    const restoredSession: SessionState = {
+      ...session,
+      status: previousStatus,
+      deletionError: undefined,
+      previousStatus: undefined,
+      lastHeartbeat: new Date().toISOString(),
+    };
+
+    await this.store.save(restoredSession);
+    return restoredSession;
+  }
+
+  /**
+   * Cleans up an orphaned worktree (worktree without session file).
+   */
+  async cleanupOrphan(worktreePath: string): Promise<WorktreeRemovalResult> {
+    // Verify it's actually an orphan (worktree exists, no session)
+    if (!fs.existsSync(worktreePath)) {
+      return { success: true, notFound: true }; // Already gone
+    }
+
+    if (!GitUtils.isWorktree(worktreePath)) {
+      return { success: false, error: 'Path is not a git worktree' };
+    }
+
+    // Try to read context to get session ID
+    const context = await this.store.readSessionContext(worktreePath);
+    if (context) {
+      // Check if session actually exists
+      const session = await this.store.load(context.sessionId);
+      if (session) {
+        return {
+          success: false,
+          error: `Session '${context.sessionId}' still exists - use delete() instead`,
+        };
       }
     }
 
-    return count;
+    // Remove the worktree
+    return this.gitUtils.removeWorktree(worktreePath);
   }
 
   /**
@@ -352,6 +624,14 @@ export class SessionService {
 
     if (!session) {
       throw new Error(`Session '${sessionId}' not found`);
+    }
+
+    // Cannot forward to completed or cancelled sessions
+    if (session.status === 'complete') {
+      throw new Error('Cannot forward message to a completed session');
+    }
+    if (session.status === 'cancelled') {
+      throw new Error('Cannot forward message to a cancelled session');
     }
 
     const now = new Date().toISOString();
@@ -504,9 +784,7 @@ export class SessionService {
    */
   private async writeWorkerPrompt(
     worktreePath: string,
-    issueNumber: number,
-    title: string,
-    body: string,
+    issues: IssueRef[],
     branchName: string,
     mode: ExecutionMode = 'single',
     additionalPromptSections?: string[]
@@ -518,104 +796,16 @@ export class SessionService {
     }
 
     const promptPath = path.join(claudeDir, 'session-prompt.md');
-    const cli = this.config.cliCommand ?? 'orch';
-    let prompt = `# Session: Issue #${issueNumber}
 
-## Repository Context
-
-**IMPORTANT:** For all GitHub operations (CLI and MCP tools), use these values:
-- Owner: \`${this.config.githubOwner}\`
-- Repo: \`${this.config.githubRepo}\`
-- Issue: \`#${issueNumber}\`
-- Branch: \`${branchName}\`
-
-Examples:
-\`\`\`bash
-gh issue view ${issueNumber} --repo ${this.config.githubOwner}/${this.config.githubRepo}
-gh pr create --repo ${this.config.githubOwner}/${this.config.githubRepo} ...
-\`\`\`
-
-## Issue
-**${title}**
-
-${body}
-
-## Status Reporting
-
-**Report status at each phase transition** by updating the session file directly.
-
-**Session file location:** Read \`session-context.json\` in the worktree root to find the \`sessionFilePath\` field.
-
-| Phase | Status Value |
-|-------|--------------|
-| Starting | \`planning\` |
-| Plan complete | \`planning_complete\` |
-| Implementing | \`working\` |
-| Stuck | \`stuck\` (also set \`stuckReason\`) |
-| Complete | \`complete\` |
-
-**How to update status:**
-1. Read the session file (path from \`session-context.json\` → \`sessionFilePath\`)
-2. Update the \`status\` field to the new value
-3. Update \`lastHeartbeat\` to current ISO timestamp
-4. If stuck, also set \`stuckReason\` to explain what you need
-5. Write the updated JSON back to the session file
-
-**Note:** \`/ship\` automatically updates status to \`shipping\` → \`reviews_in_progress\` → \`complete\`.
-
-## Workflow
-
-### Phase 1: Planning
-1. **First:** Update session file with \`"status": "planning"\`
-2. Read and understand the issue requirements
-3. Explore the codebase to understand existing patterns
-4. Create a detailed implementation plan
-5. Write your plan to \`.claude/worker-plan.md\`
-6. **Then:** Update session file with \`"status": "planning_complete"\`
-
-### Message Check Protocol
-
-Check for forwarded messages at these points:
-1. **After each phase** - planning complete, before implementation, after tests
-2. **When stuck** - check every 5 minutes while waiting for guidance
-3. **Before major decisions** - architectural choices, security implementations
-
-**How to check:** Read the session file and check the \`forwardedMessage\` field.
-
-**If message exists:**
-1. Read and incorporate the guidance into your approach
-2. Clear the message by setting \`forwardedMessage\` to \`undefined\` (or remove the field)
-3. Continue with your work (the guidance may unstick you)
-
-**Important:** When your status is \`stuck\`, check for messages periodically - the orchestrator may have sent guidance that unblocks you.
-
-### Phase 3: Implementation
-1. **First:** Update session file with \`"status": "working"\`
-2. Follow your plan in \`.claude/worker-plan.md\`
-3. Build and test your changes
-4. Create PR via \`/ship\` (handles remaining status updates automatically)
-
-### Domain Gates
-If you encounter these, set status to \`stuck\` with a clear reason:
-- Auth/Security decisions
-- Performance-critical code
-- Breaking changes
-- Data migration
-
-**Example:** Update session file with \`"status": "stuck"\` and \`"stuckReason": "Need auth decision: should we use JWT or session tokens?"\`
-
-## Reference
-- Follow CLAUDE.md for coding standards
-- Build must pass before shipping
-- Tests must pass before shipping
-`;
-
-    // Add additional prompt sections from hooks
-    if (additionalPromptSections && additionalPromptSections.length > 0) {
-      prompt += '\n## Additional Instructions\n\n';
-      prompt += additionalPromptSections.join('\n\n');
-      prompt += '\n';
-    }
+    // Use the prompt builder to generate the prompt content
+    const prompt = this.promptBuilder.build({
+      githubOwner: this.config.githubOwner,
+      githubRepo: this.config.githubRepo,
+      issues,
+      branchName,
+      mode,
+      additionalSections: additionalPromptSections,
+    });
 
     await fs.promises.writeFile(promptPath, prompt, 'utf-8');
     return promptPath;

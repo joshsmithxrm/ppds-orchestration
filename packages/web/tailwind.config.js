@@ -13,6 +13,7 @@ export default {
         'ppds-header': '#141414',
         'ppds-accent': '#25c2a0',
         'ppds-muted': '#8b949e',
+        'ppds-ralph': '#a855f7',  // purple-500 - Ralph mode indicator
         // Status colors matching CLI
         'status-registered': '#6b7280',   // gray
         'status-planning': '#3b82f6',     // blue

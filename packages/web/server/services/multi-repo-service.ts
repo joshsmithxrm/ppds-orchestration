@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import {
   CentralConfig,
   RepoConfig,
@@ -5,10 +6,13 @@ import {
   SessionState,
   SessionStatus,
   SessionWatcher,
+  SessionStore,
   GitUtils,
   getRepoEffectiveConfig,
   ExecutionMode,
   HookExecutor,
+  OrphanedWorktree,
+  DeleteResult,
 } from '@ppds-orchestration/core';
 
 export interface MultiRepoSession extends SessionState {
@@ -55,9 +59,27 @@ export class MultiRepoService {
 
   /**
    * Initialize the service (must be called after construction).
+   * Detects orphaned worktrees on startup.
    */
   async initialize(): Promise<void> {
     await this.initializeServices();
+
+    // Detect orphans on startup (log only, don't auto-cleanup)
+    try {
+      const orphans = await this.reconcileOrphans();
+      if (orphans.length > 0) {
+        console.warn(`Detected ${orphans.length} orphaned worktree(s) on startup:`);
+        for (const orphan of orphans) {
+          const issueInfo = orphan.issueNumbers
+            ? ` (issues: ${orphan.issueNumbers.map(n => `#${n}`).join(', ')})`
+            : '';
+          console.warn(`  - ${path.basename(orphan.worktreePath)}${issueInfo}`);
+        }
+        console.warn('Use the dashboard to clean up orphaned worktrees.');
+      }
+    } catch (error) {
+      console.error('Error during orphan detection:', error);
+    }
   }
 
   /**
@@ -191,10 +213,13 @@ export class MultiRepoService {
 
   /**
    * Spawn a new worker.
+   * @param repoId - Repository ID
+   * @param issueNumbers - Single issue number or array of issue numbers for combined session
+   * @param mode - Execution mode ('single' or 'ralph')
    */
   async spawn(
     repoId: string,
-    issueNumber: number,
+    issueNumbers: number | number[],
     mode: ExecutionMode = 'single'
   ): Promise<SessionState> {
     const service = this.getService(repoId);
@@ -215,7 +240,7 @@ export class MultiRepoService {
       additionalPromptSections.push(onTestHook.value);
     }
 
-    const session = await service.spawn(issueNumber, { mode, additionalPromptSections });
+    const session = await service.spawn(issueNumbers, { mode, additionalPromptSections });
 
     // Execute onSpawn command hook after successful spawn
     await this.executeHook('onSpawn', repoId, session);
@@ -276,15 +301,138 @@ export class MultiRepoService {
   }
 
   /**
-   * Cancel session.
+   * Delete a session with safe cleanup.
+   * @param repoId - Repository ID
+   * @param sessionId - Session ID to delete
+   * @param options.keepWorktree - If true, don't remove worktree
+   * @param options.force - If true, delete session even if worktree cleanup fails
    */
-  async cancel(
+  async delete(
     repoId: string,
     sessionId: string,
-    keepWorktree?: boolean
-  ): Promise<void> {
+    options?: { keepWorktree?: boolean; force?: boolean }
+  ): Promise<DeleteResult> {
     const service = this.getService(repoId);
-    return service.cancel(sessionId, { keepWorktree });
+    return service.delete(sessionId, options);
+  }
+
+  /**
+   * Retry deletion for a session in deletion_failed state.
+   */
+  async retryDelete(repoId: string, sessionId: string): Promise<DeleteResult> {
+    const service = this.getService(repoId);
+    return service.retryDelete(sessionId);
+  }
+
+  /**
+   * Roll back a deletion_failed session to its previous state.
+   */
+  async rollbackDeletion(repoId: string, sessionId: string): Promise<SessionState> {
+    const service = this.getService(repoId);
+    return service.rollbackDeletion(sessionId);
+  }
+
+  /**
+   * Clean up an orphaned worktree.
+   */
+  async cleanupOrphan(
+    repoId: string,
+    worktreePath: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const service = this.getService(repoId);
+    return service.cleanupOrphan(worktreePath);
+  }
+
+  /**
+   * Detect orphaned worktrees across all repos.
+   * An orphan is a worktree that matches our naming convention but has no session file.
+   */
+  async reconcileOrphans(): Promise<OrphanedWorktree[]> {
+    const orphans: OrphanedWorktree[] = [];
+
+    for (const [repoId, repoConfig] of Object.entries(this.config.repos)) {
+      try {
+        const repoOrphans = await this.detectOrphansForRepo(repoId, repoConfig);
+        orphans.push(...repoOrphans);
+      } catch (error) {
+        console.error(`Error detecting orphans for ${repoId}:`, error);
+      }
+    }
+
+    return orphans;
+  }
+
+  /**
+   * Detect orphaned worktrees for a specific repo.
+   */
+  private async detectOrphansForRepo(
+    repoId: string,
+    repoConfig: RepoConfig
+  ): Promise<OrphanedWorktree[]> {
+    const gitUtils = new GitUtils(repoConfig.path);
+    const service = this.services.get(repoId);
+    if (!service) return [];
+
+    let worktrees: Array<{ path: string; branch: string }>;
+    try {
+      worktrees = await gitUtils.listWorktrees();
+    } catch {
+      return []; // Can't list worktrees, skip
+    }
+
+    const sessions = await service.list();
+    const sessionWorktreePaths = new Set(
+      sessions.map(s => path.normalize(s.worktreePath).toLowerCase())
+    );
+
+    const orphans: OrphanedWorktree[] = [];
+    const worktreePrefix = repoConfig.worktreePrefix ?? `${path.basename(repoConfig.path)}-`;
+
+    for (const wt of worktrees) {
+      // Skip the main worktree (the repo itself)
+      if (path.normalize(wt.path).toLowerCase() === path.normalize(repoConfig.path).toLowerCase()) {
+        continue;
+      }
+
+      // Check if this looks like an orchestration worktree
+      const wtName = path.basename(wt.path);
+      if (!wtName.startsWith(worktreePrefix)) {
+        continue;
+      }
+
+      // Check if there's a corresponding session
+      const normalizedPath = path.normalize(wt.path).toLowerCase();
+      if (sessionWorktreePaths.has(normalizedPath)) {
+        continue;
+      }
+
+      // This is an orphan - try to recover context
+      const store = new SessionStore(repoId);
+      let issueNumbers: number[] | undefined;
+      let sessionId: string | undefined;
+      let contextError: string | undefined;
+
+      try {
+        const context = await store.readSessionContext(wt.path);
+        if (context) {
+          issueNumbers = context.issues.map(i => i.number);
+          sessionId = context.sessionId;
+        }
+      } catch (error) {
+        contextError = error instanceof Error ? error.message : String(error);
+      }
+
+      orphans.push({
+        worktreePath: wt.path,
+        branchName: wt.branch,
+        issueNumbers,
+        sessionId,
+        detectedAt: new Date().toISOString(),
+        contextError,
+      });
+    }
+
+    return orphans;
   }
 
   /**

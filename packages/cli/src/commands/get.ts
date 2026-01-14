@@ -1,5 +1,28 @@
 import chalk from 'chalk';
-import { createSessionService } from '@ppds-orchestration/core';
+import { createSessionService, SessionStatus } from '@ppds-orchestration/core';
+
+// CLI-specific status colors (not exported from core to avoid browser issues)
+const STATUS_COLORS: Record<SessionStatus, (s: string) => string> = {
+  registered: chalk.gray,
+  planning: chalk.blue,
+  planning_complete: chalk.magenta,
+  working: chalk.green,
+  shipping: chalk.cyan,
+  reviews_in_progress: chalk.cyan,
+  pr_ready: chalk.greenBright,
+  stuck: chalk.red,
+  paused: chalk.yellow,
+  complete: chalk.dim,
+  cancelled: chalk.dim,
+  deleting: chalk.yellow,
+  deletion_failed: chalk.redBright,
+};
+
+function getColoredStatusText(status: SessionStatus): string {
+  const text = status.toUpperCase().replace('_', ' ');
+  const colorFn = STATUS_COLORS[status] ?? ((s: string) => s);
+  return colorFn(text);
+}
 
 export async function getCommand(sessionId: string, options: { json?: boolean }): Promise<void> {
   const service = await createSessionService();
@@ -20,9 +43,24 @@ export async function getCommand(sessionId: string, options: { json?: boolean })
   const worktreeStatus = await service.getWorktreeStatus(sessionId);
 
   // Format output
-  console.log(chalk.bold(`Session #${session.issueNumber}: ${session.issueTitle}`));
+  const primaryIssue = session.issues[0];
+  const issueDisplay = session.issues.length === 1
+    ? `#${primaryIssue.number}: ${primaryIssue.title}`
+    : `Issues ${session.issues.map(i => `#${i.number}`).join(', ')}`;
+
+  console.log(chalk.bold(`Session ${issueDisplay}`));
   console.log();
-  console.log(`  Status:      ${formatStatus(session.status)}`);
+
+  // Show all issues if multi-issue
+  if (session.issues.length > 1) {
+    console.log(chalk.bold('  Issues:'));
+    for (const issue of session.issues) {
+      console.log(`    #${issue.number}: ${issue.title}`);
+    }
+    console.log();
+  }
+
+  console.log(`  Status:      ${getColoredStatusText(session.status)}`);
   console.log(`  Branch:      ${chalk.cyan(session.branch)}`);
   console.log(`  Worktree:    ${session.worktreePath}`);
   console.log(`  Started:     ${new Date(session.startedAt).toLocaleString()}`);
@@ -63,21 +101,3 @@ export async function getCommand(sessionId: string, options: { json?: boolean })
   }
 }
 
-function formatStatus(status: string): string {
-  const colors: Record<string, (s: string) => string> = {
-    registered: chalk.gray,
-    planning: chalk.blue,
-    planning_complete: chalk.magenta,
-    working: chalk.green,
-    shipping: chalk.cyan,
-    reviews_in_progress: chalk.cyan,
-    pr_ready: chalk.greenBright,
-    stuck: chalk.red,
-    paused: chalk.yellow,
-    complete: chalk.green,
-    cancelled: chalk.gray,
-  };
-
-  const formatted = status.toUpperCase().replace('_', ' ');
-  return colors[status]?.(formatted) ?? formatted;
-}

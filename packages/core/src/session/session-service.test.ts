@@ -3,12 +3,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { SessionService, SessionServiceConfig, createSessionService } from './session-service.js';
-import { SessionState } from './types.js';
+import { SessionState, IssueRef } from './types.js';
 
 // Mock worker spawner that doesn't actually spawn terminals
 const mockSpawner = {
   isAvailable: () => true,
-  spawn: vi.fn().mockResolvedValue(undefined),
+  spawn: vi.fn().mockResolvedValue({ success: true, spawnId: 'mock-spawn-id', spawnedAt: new Date().toISOString() }),
   getName: () => 'Mock Spawner',
 };
 
@@ -46,6 +46,23 @@ describe('SessionService', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
+  const createTestIssue = (number: number): IssueRef => ({
+    number,
+    title: `Test issue #${number}`,
+    body: `Description for issue #${number}`,
+  });
+
+  const createTestSession = (id: string, issueNumbers: number[], worktreePath: string): SessionState => ({
+    id,
+    issues: issueNumbers.map(createTestIssue),
+    status: 'working',
+    mode: 'single',
+    branch: issueNumbers.length === 1 ? `issue-${issueNumbers[0]}` : `issues-${issueNumbers.join('-')}`,
+    worktreePath,
+    startedAt: new Date().toISOString(),
+    lastHeartbeat: new Date().toISOString(),
+  });
+
   describe('list', () => {
     it('should return empty array when no sessions', async () => {
       const sessions = await service.list();
@@ -62,16 +79,7 @@ describe('SessionService', () => {
       const worktreePath = path.join(tempDir, 'test-worktree');
       fs.mkdirSync(worktreePath, { recursive: true });
 
-      const session: SessionState = {
-        id: '123',
-        issueNumber: 123,
-        issueTitle: 'Test issue',
-        status: 'working',
-        branch: 'issue-123',
-        worktreePath,
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('123', [123], worktreePath);
 
       fs.writeFileSync(
         path.join(sessionsDir, 'work-123.json'),
@@ -101,14 +109,8 @@ describe('SessionService', () => {
       fs.mkdirSync(worktreePath, { recursive: true });
 
       const session: SessionState = {
-        id: '123',
-        issueNumber: 123,
-        issueTitle: 'Test issue',
+        ...createTestSession('123', [123], worktreePath),
         status: 'stuck',
-        branch: 'issue-123',
-        worktreePath,
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
         stuckReason: 'Need guidance',
       };
 
@@ -139,16 +141,7 @@ describe('SessionService', () => {
       worktreePath = path.join(tempDir, 'test-worktree');
       fs.mkdirSync(worktreePath, { recursive: true });
 
-      const session: SessionState = {
-        id: '123',
-        issueNumber: 123,
-        issueTitle: 'Test issue',
-        status: 'working',
-        branch: 'issue-123',
-        worktreePath,
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('123', [123], worktreePath);
 
       fs.writeFileSync(
         path.join(sessionsDir, 'work-123.json'),
@@ -172,33 +165,39 @@ describe('SessionService', () => {
       const paused = await service.pause('123');
       expect(paused.status).toBe('paused');
     });
+
+    it('should reject pause on completed session', async () => {
+      // Update session to complete status
+      const sessionPath = path.join(sessionsDir, 'work-123.json');
+      const session = JSON.parse(fs.readFileSync(sessionPath, 'utf-8'));
+      session.status = 'complete';
+      fs.writeFileSync(sessionPath, JSON.stringify(session));
+
+      await expect(service.pause('123')).rejects.toThrow('Cannot pause a completed session');
+    });
   });
 
-  describe('cancel', () => {
-    it('should cancel a session and remove worktree', async () => {
+  describe('delete', () => {
+    beforeEach(() => {
+      // Mock GitUtils.removeWorktree since test worktrees aren't real git worktrees
+      vi.spyOn(service['gitUtils'], 'removeWorktree').mockResolvedValue({ success: true });
+    });
+
+    it('should delete a session and remove worktree', async () => {
       const sessionsDir = path.join(tempDir, 'test-project', 'sessions');
       fs.mkdirSync(sessionsDir, { recursive: true });
 
       const worktreePath = path.join(tempDir, 'test-worktree');
       fs.mkdirSync(worktreePath, { recursive: true });
 
-      const session: SessionState = {
-        id: '123',
-        issueNumber: 123,
-        issueTitle: 'Test issue',
-        status: 'working',
-        branch: 'issue-123',
-        worktreePath,
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('123', [123], worktreePath);
 
       fs.writeFileSync(
         path.join(sessionsDir, 'work-123.json'),
         JSON.stringify(session)
       );
 
-      await service.cancel('123');
+      await service.delete('123');
 
       // Session file should be deleted
       expect(fs.existsSync(path.join(sessionsDir, 'work-123.json'))).toBe(false);
@@ -212,15 +211,36 @@ describe('SessionService', () => {
       fs.mkdirSync(worktreePath, { recursive: true });
       fs.writeFileSync(path.join(worktreePath, 'test-file.txt'), 'test');
 
+      const session = createTestSession('123', [123], worktreePath);
+
+      fs.writeFileSync(
+        path.join(sessionsDir, 'work-123.json'),
+        JSON.stringify(session)
+      );
+
+      await service.delete('123', { keepWorktree: true });
+
+      // Worktree directory should still exist
+      // (In real usage, git worktree remove would be called, but we're not testing that)
+      expect(fs.existsSync(worktreePath)).toBe(true);
+    });
+
+    it('should throw if session not found', async () => {
+      await expect(service.delete('non-existent')).rejects.toThrow(
+        "Session 'non-existent' not found"
+      );
+    });
+
+    it('should delete completed sessions', async () => {
+      const sessionsDir = path.join(tempDir, 'test-project', 'sessions');
+      fs.mkdirSync(sessionsDir, { recursive: true });
+
+      const worktreePath = path.join(tempDir, 'test-worktree');
+      fs.mkdirSync(worktreePath, { recursive: true });
+
       const session: SessionState = {
-        id: '123',
-        issueNumber: 123,
-        issueTitle: 'Test issue',
-        status: 'working',
-        branch: 'issue-123',
-        worktreePath,
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
+        ...createTestSession('123', [123], worktreePath),
+        status: 'complete',
       };
 
       fs.writeFileSync(
@@ -228,11 +248,149 @@ describe('SessionService', () => {
         JSON.stringify(session)
       );
 
-      await service.cancel('123', { keepWorktree: true });
+      // Should not throw - delete works on any status
+      await service.delete('123');
+      expect(fs.existsSync(path.join(sessionsDir, 'work-123.json'))).toBe(false);
+    });
+  });
 
-      // Worktree directory should still exist
-      // (In real usage, git worktree remove would be called, but we're not testing that)
-      expect(fs.existsSync(worktreePath)).toBe(true);
+  describe('restart', () => {
+    let sessionsDir: string;
+    let worktreePath: string;
+
+    beforeEach(() => {
+      sessionsDir = path.join(tempDir, 'test-project', 'sessions');
+      fs.mkdirSync(sessionsDir, { recursive: true });
+
+      worktreePath = path.join(tempDir, 'test-worktree');
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Create .claude directory with prompt file
+      const claudeDir = path.join(worktreePath, '.claude');
+      fs.mkdirSync(claudeDir, { recursive: true });
+      fs.writeFileSync(path.join(claudeDir, 'session-prompt.md'), '# Test prompt');
+    });
+
+    it('should throw if session not found', async () => {
+      await expect(service.restart('non-existent')).rejects.toThrow(
+        "Session 'non-existent' not found"
+      );
+    });
+
+    it('should throw if session is not stuck', async () => {
+      const session: SessionState = {
+        ...createTestSession('123', [123], worktreePath),
+        status: 'working',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
+
+      await expect(service.restart('123')).rejects.toThrow(
+        'Can only restart stuck sessions (current status: working)'
+      );
+    });
+
+    it('should throw if worktree does not exist', async () => {
+      const nonExistentWorktree = path.join(tempDir, 'non-existent-worktree');
+      const session: SessionState = {
+        ...createTestSession('123', [123], nonExistentWorktree),
+        status: 'stuck',
+        stuckReason: 'Test stuck reason',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
+
+      await expect(service.restart('123')).rejects.toThrow(
+        `Worktree no longer exists at ${nonExistentWorktree}`
+      );
+    });
+
+    it('should throw if prompt file does not exist', async () => {
+      // Remove the prompt file
+      fs.unlinkSync(path.join(worktreePath, '.claude', 'session-prompt.md'));
+
+      const session: SessionState = {
+        ...createTestSession('123', [123], worktreePath),
+        status: 'stuck',
+        stuckReason: 'Test stuck reason',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
+
+      await expect(service.restart('123')).rejects.toThrow(
+        `Worker prompt not found at ${path.join(worktreePath, '.claude', 'session-prompt.md')}`
+      );
+    });
+
+    it('should restart stuck session and update status to working', async () => {
+      const session: SessionState = {
+        ...createTestSession('123', [123], worktreePath),
+        status: 'stuck',
+        stuckReason: 'Need guidance',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
+
+      const restarted = await service.restart('123');
+
+      expect(restarted.status).toBe('working');
+      expect(restarted.stuckReason).toBeUndefined();
+      expect(mockSpawner.spawn).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('spawn overlap detection', () => {
+    let sessionsDir: string;
+
+    beforeEach(() => {
+      sessionsDir = path.join(tempDir, 'test-project', 'sessions');
+      fs.mkdirSync(sessionsDir, { recursive: true });
+    });
+
+    it('should throw if issue is already in an active session', async () => {
+      const worktreePath = path.join(tempDir, 'existing-worktree');
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Create an existing session with issue 2
+      const existingSession: SessionState = {
+        ...createTestSession('2', [2, 4, 5], worktreePath),
+        status: 'working',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-2.json'), JSON.stringify(existingSession));
+
+      // Try to spawn a session that includes issue 2
+      await expect(service.spawn([1, 2, 3])).rejects.toThrow(
+        "Issue(s) #2 already in active session '2'"
+      );
+    });
+
+    it('should allow spawn if overlapping session is completed', async () => {
+      const worktreePath = path.join(tempDir, 'existing-worktree');
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Create a completed session with issue 2
+      const existingSession: SessionState = {
+        ...createTestSession('2', [2], worktreePath),
+        status: 'complete',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-2.json'), JSON.stringify(existingSession));
+
+      // This should not throw (completed sessions don't block)
+      // Note: This will fail at GitHub fetch step, but we're testing the overlap detection
+      await expect(service.spawn([2])).rejects.toThrow(/Failed to fetch issue/);
+    });
+
+    it('should detect multiple overlapping issues', async () => {
+      const worktreePath = path.join(tempDir, 'existing-worktree');
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Create an existing session with issues 2, 4, 5
+      const existingSession: SessionState = {
+        ...createTestSession('2', [2, 4, 5], worktreePath),
+        status: 'working',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-2.json'), JSON.stringify(existingSession));
+
+      // Try to spawn a session that includes issues 2 and 4
+      await expect(service.spawn([1, 2, 4])).rejects.toThrow(
+        "Issue(s) #2, #4 already in active session '2'"
+      );
     });
   });
 
@@ -243,12 +401,7 @@ describe('SessionService', () => {
 
       const oldDate = new Date(Date.now() - 60000).toISOString();
       const session: SessionState = {
-        id: '123',
-        issueNumber: 123,
-        issueTitle: 'Test issue',
-        status: 'working',
-        branch: 'issue-123',
-        worktreePath: '/tmp/test',
+        ...createTestSession('123', [123], '/tmp/test'),
         startedAt: oldDate,
         lastHeartbeat: oldDate,
       };
@@ -271,12 +424,7 @@ describe('SessionService', () => {
     it('should return true for session with old heartbeat', () => {
       const oldDate = new Date(Date.now() - 120000).toISOString(); // 2 minutes ago
       const session: SessionState = {
-        id: '123',
-        issueNumber: 123,
-        issueTitle: 'Test issue',
-        status: 'working',
-        branch: 'issue-123',
-        worktreePath: '/tmp/test',
+        ...createTestSession('123', [123], '/tmp/test'),
         startedAt: oldDate,
         lastHeartbeat: oldDate,
       };
@@ -285,16 +433,7 @@ describe('SessionService', () => {
     });
 
     it('should return false for session with recent heartbeat', () => {
-      const session: SessionState = {
-        id: '123',
-        issueNumber: 123,
-        issueTitle: 'Test issue',
-        status: 'working',
-        branch: 'issue-123',
-        worktreePath: '/tmp/test',
-        startedAt: new Date().toISOString(),
-        lastHeartbeat: new Date().toISOString(),
-      };
+      const session = createTestSession('123', [123], '/tmp/test');
 
       expect(service.isStale(session)).toBe(false);
     });

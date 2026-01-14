@@ -6,14 +6,41 @@ export {
   SessionDynamicState,
   WorktreeStatus,
   ExecutionMode,
+  IssueRef,
+  getPrimaryIssue,
+  getIssueNumbers,
   STALE_THRESHOLD_MS,
 } from './session/types.js';
+
+// Session formatting utilities (browser-safe)
+export {
+  STATUS_ICONS,
+  STATUS_CSS_CLASSES,
+  ACTIVE_STATUSES_FOR_STALE,
+  formatIssues,
+  formatSessionTitle,
+  isTerminalStatus,
+  formatStatusText,
+} from './session/formatting.js';
+
+// Note: CLI-specific formatting utilities (STATUS_COLORS, getColoredStatusIcon, getColoredStatusText)
+// are available from '@ppds-orchestration/core/session/formatting-cli' for Node.js environments only.
+
+// Worker prompt builder
+export { WorkerPromptBuilder } from './session/worker-prompt-builder.js';
+export type { PromptContext } from './session/worker-prompt-builder.js';
 
 export type {
   WorkerSpawnRequest,
   SessionListResult,
   InferredActivity,
+  DeleteResult,
+  WorktreeRemovalResult,
 } from './session/types.js';
+
+// Orphan detection
+export { OrphanedWorktree } from './session/types.js';
+export type { OrphanedWorktree as OrphanedWorktreeType } from './session/types.js';
 
 // Central config types
 export {

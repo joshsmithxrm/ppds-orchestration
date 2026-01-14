@@ -1,21 +1,18 @@
 import chalk from 'chalk';
-import { createSessionService, SessionState, STALE_THRESHOLD_MS } from '@ppds-orchestration/core';
+import {
+  createSessionService,
+  SessionState,
+  SessionStatus,
+  STALE_THRESHOLD_MS,
+  STATUS_ICONS,
+  ACTIVE_STATUSES_FOR_STALE,
+  formatIssues,
+  formatSessionTitle,
+  isTerminalStatus,
+} from '@ppds-orchestration/core';
 
-const STATUS_ICONS: Record<string, string> = {
-  registered: '[ ]',
-  planning: '[~]',
-  planning_complete: '[P]',
-  working: '[*]',
-  shipping: '[>]',
-  reviews_in_progress: '[R]',
-  pr_ready: '[+]',
-  stuck: '[!]',
-  paused: '[||]',
-  complete: '[✓]',
-  cancelled: '[x]',
-};
-
-const STATUS_COLORS: Record<string, (s: string) => string> = {
+// CLI-specific chalk color mappings (not exported from core to avoid browser issues)
+const STATUS_COLORS: Record<SessionStatus, (s: string) => string> = {
   registered: chalk.gray,
   planning: chalk.blue,
   planning_complete: chalk.magenta,
@@ -25,8 +22,10 @@ const STATUS_COLORS: Record<string, (s: string) => string> = {
   pr_ready: chalk.greenBright,
   stuck: chalk.red,
   paused: chalk.yellow,
-  complete: chalk.green,
-  cancelled: chalk.gray,
+  complete: chalk.dim,
+  cancelled: chalk.dim,
+  deleting: chalk.yellow,
+  deletion_failed: chalk.redBright,
 };
 
 function getElapsedTime(startedAt: string): string {
@@ -49,14 +48,20 @@ function isStale(session: SessionState): boolean {
 }
 
 function formatSession(session: SessionState): string {
-  const icon = isStale(session) && session.status === 'working'
+  const isCompleted = isTerminalStatus(session.status);
+  const colorFn = isCompleted ? chalk.dim : (s: string) => s;
+
+  // Show stale icon for active statuses that haven't sent heartbeat recently
+  const icon = isStale(session) && ACTIVE_STATUSES_FOR_STALE.includes(session.status)
     ? chalk.yellow('[?]')
     : STATUS_COLORS[session.status]?.(STATUS_ICONS[session.status] ?? '[ ]') ?? '[ ]';
 
   const status = session.status.toUpperCase().replace('_', ' ');
   const elapsed = getElapsedTime(session.startedAt);
+  const issues = formatIssues(session);
+  const title = formatSessionTitle(session);
 
-  let line = `${icon} #${session.issueNumber} - ${STATUS_COLORS[session.status]?.(status) ?? status} (${elapsed}) - ${session.issueTitle}`;
+  let line = colorFn(`${icon} ${issues} - ${STATUS_COLORS[session.status]?.(status) ?? status} (${elapsed}) - ${title}`);
 
   if (session.stuckReason) {
     line += `\n    ${chalk.red('Reason:')} ${session.stuckReason}`;
@@ -66,14 +71,21 @@ function formatSession(session: SessionState): string {
     line += `\n    ${chalk.blue('PR:')} ${session.pullRequestUrl}`;
   }
 
-  line += `\n    Branch: ${session.branch}, Worktree: ${session.worktreePath}`;
+  line += colorFn(`\n    Branch: ${session.branch}, Worktree: ${session.worktreePath}`);
 
   return line;
 }
 
 export async function listCommand(options: { all?: boolean; json?: boolean }): Promise<void> {
   const service = await createSessionService();
+
+  // By default, show all sessions including completed
+  // Use --active to filter to only running sessions
   const sessions = await service.list();
+
+  // Filter based on options (--all is deprecated, keeping for backward compat)
+  // Now we show all by default, so --all does nothing
+  // Could add --active flag to show only running
 
   if (options.json) {
     console.log(JSON.stringify(sessions, null, 2));
@@ -81,18 +93,32 @@ export async function listCommand(options: { all?: boolean; json?: boolean }): P
   }
 
   if (sessions.length === 0) {
-    console.log(chalk.gray('No active sessions'));
+    console.log(chalk.gray('No sessions'));
     return;
   }
 
-  console.log(chalk.bold(`Active Sessions (${sessions.length}):\n`));
+  // Separate running and completed sessions
+  const running = sessions.filter(s => !isTerminalStatus(s.status));
+  const completed = sessions.filter(s => isTerminalStatus(s.status));
 
-  for (const session of sessions) {
-    console.log(formatSession(session));
-    console.log();
+  if (running.length > 0) {
+    console.log(chalk.bold(`Active Sessions (${running.length}):\n`));
+    for (const session of running) {
+      console.log(formatSession(session));
+      console.log();
+    }
+  }
+
+  if (completed.length > 0) {
+    console.log(chalk.dim(`\nCompleted Sessions (${completed.length}):\n`));
+    for (const session of completed) {
+      console.log(formatSession(session));
+      console.log();
+    }
   }
 
   // Legend
   console.log(chalk.gray('Icons: [ ] registered, [~] planning, [P] plan ready, [*] working'));
   console.log(chalk.gray('       [!] stuck, [||] paused, [+] PR ready, [?] stale'));
+  console.log(chalk.gray('       [\u2713] complete, [x] cancelled'));
 }

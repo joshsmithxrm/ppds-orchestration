@@ -1,7 +1,7 @@
 import chalk from 'chalk';
-import { createSessionService, SessionStatus } from '@ppds-orchestration/core';
+import { createSessionService, SessionStatus, formatIssues } from '@ppds-orchestration/core';
 
-const VALID_STATUSES = [
+const VALID_STATUSES: SessionStatus[] = [
   'registered',
   'planning',
   'planning_complete',
@@ -22,7 +22,7 @@ export async function updateCommand(options: {
   pr?: string;
 }): Promise<void> {
   // Validate status
-  if (!VALID_STATUSES.includes(options.status)) {
+  if (!VALID_STATUSES.includes(options.status as SessionStatus)) {
     throw new Error(
       `Invalid status '${options.status}'. Valid statuses: ${VALID_STATUSES.join(', ')}`
     );
@@ -43,7 +43,7 @@ export async function updateCommand(options: {
     }
   );
 
-  console.log(chalk.green(`✓ Session #${session.issueNumber} updated to ${options.status}`));
+  console.log(chalk.green(`\u2713 Session ${formatIssues(session)} updated to ${options.status}`));
 
   if (options.reason) {
     console.log(`  Reason: ${options.reason}`);

@@ -1,6 +1,6 @@
 # Test Spawn Worker
 
-Test the spawn worker feature in the dashboard.
+Test the spawn worker feature in the web dashboard.
 
 ## Usage
 
@@ -13,15 +13,15 @@ Test the spawn worker feature in the dashboard.
 | Mode | Description |
 |------|-------------|
 | `mock` | Browser-only with mock data (fast, no prerequisites) |
-| `integration` | Full Tauri app with real GitHub data |
+| `live` | Full web app with real GitHub data |
 
 ### Examples
 
 ```bash
 /test-spawn mock 2          # Test issue #2 with mock data
-/test-spawn integration 2   # Test issue #2 with real GitHub API
+/test-spawn live 2          # Test issue #2 with real GitHub API
 /test-spawn mock            # Mock mode, will prompt for issue
-/test-spawn integration     # Integration mode, will prompt for issue
+/test-spawn live            # Live mode, will prompt for issue
 ```
 
 ## Instructions
@@ -31,59 +31,50 @@ Based on the arguments provided ($ARGUMENTS), test the spawn worker feature.
 ### Step 1: Parse arguments
 
 Parse $ARGUMENTS to extract:
-- **mode**: First argument - either `mock` or `integration`
+- **mode**: First argument - either `mock` or `live`
 - **issue**: Second argument - the GitHub issue number (optional, prompt if missing)
 
 If only one argument is provided:
-- If it's `mock` or `integration`: use that mode, prompt for issue number
+- If it's `mock` or `live`: use that mode, prompt for issue number
 - If it's a number: default to `mock` mode with that issue number
 
-### Step 2: Start the appropriate server
+### Step 2: Start the server
 
 **For mock mode:**
 ```bash
-# Check if Vite is running on port 1420
-netstat -ano | findstr :1420
+# Check if Vite is running on port 5173
+netstat -ano | findstr :5173
 ```
 
 If not running, start the Vite dev server in the background:
 ```bash
-cd packages/dashboard && npm run dev
+npm run dev -w packages/web
 ```
 
-**For integration mode:**
+**For live mode:**
 
 First, verify prerequisites:
 ```bash
-rustc --version
 gh auth status
 ```
 
-Ensure the CLI is built:
+Ensure the packages are built:
 ```bash
 npm run build
 ```
 
-Then start Tauri dev server in the background:
+Then start the web app:
 ```bash
-cd packages/dashboard && npm run tauri:dev
+npm run dev -w packages/web
 ```
-
-Wait for Tauri to compile (first run takes 2-5 minutes). Check for port 1420 to be listening.
-
-Note: Tauri mode requires VS Build Tools and Rust toolchain.
 
 ### Step 3: Open the dashboard
 
 Use Playwright MCP to navigate to the dashboard:
 
-1. Call `mcp__plugin_playwright_playwright__browser_navigate` with URL `http://localhost:1420`
+1. Call `mcp__plugin_playwright_playwright__browser_navigate` with URL `http://localhost:5173`
 2. Wait for the page to load (use `mcp__plugin_playwright_playwright__browser_wait_for` with 2-3 seconds)
 3. Take a snapshot to verify the page loaded correctly
-
-**Verify mode:**
-- Mock mode: Should show "Dev Mode" badge in header
-- Integration mode: Should NOT show "Dev Mode" badge
 
 ### Step 4: Click the Spawn Worker button
 
@@ -111,39 +102,36 @@ Use Playwright MCP to navigate to the dashboard:
 ### Step 7: Report results
 
 Summarize the test:
-- **Mode**: mock or integration
+- **Mode**: mock or live
 - **Issue**: The issue number tested
 - **Result**: Success or failure
-- **Session ID**: From console logs (mock) or file system (integration)
+- **Session ID**: From console logs (mock) or file system (live)
 - **Errors**: Any errors encountered
 - **Screenshot**: Final state of dashboard
 
 ## Key Indicators
 
-| Result | Mock Mode | Integration Mode |
-|--------|-----------|------------------|
-| Success | Console: `[Mock] Spawned worker: session-X-timestamp` | New session folder in `.orch/sessions/` |
+| Result | Mock Mode | Live Mode |
+|--------|-----------|-----------|
+| Success | Console: `[Mock] Spawned worker: session-X-timestamp` | New session folder in `~/.orchestration/{project}/sessions/` |
 | Worker Title | `Mock Issue #N` | Real issue title from GitHub |
-| Dev Badge | Shows "Dev Mode" | No badge |
 | Data Source | In-memory mock | Real file watcher |
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| Port 1420 in use | Stop existing server: `taskkill /PID <pid> /F` |
+| Port 5173 in use | Stop existing server or let Vite auto-increment port |
 | `orch` not found | Run `npm run build` first |
 | GitHub auth error | Run `gh auth login` |
 | Issue not found | Verify issue number exists in repo |
-| Tauri won't start | Check Rust: `rustc --version` |
-| First Tauri build slow | Normal - Rust compilation takes 2-5 min first time |
 
 ## Mode Comparison
 
-| Feature | Mock Mode | Integration Mode |
-|---------|-----------|------------------|
-| Speed | Fast (seconds) | Slower (needs Tauri) |
-| Prerequisites | Node.js only | Rust + VS Build Tools |
+| Feature | Mock Mode | Live Mode |
+|---------|-----------|-----------|
+| Speed | Fast (seconds) | Fast (seconds) |
+| Prerequisites | Node.js only | Node.js + gh CLI |
 | Data | Fake/mock | Real GitHub API |
 | File watcher | Simulated | Real file system |
 | Best for | UI testing | End-to-end testing |

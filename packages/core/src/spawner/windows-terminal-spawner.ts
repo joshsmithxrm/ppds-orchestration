@@ -72,14 +72,18 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
     }
 
     // Write spawn info to worktree for tracking
+    const issueNumbers = request.issues.map(i => i.number);
     const spawnInfo: SpawnInfo = {
       spawnId,
       spawnedAt,
-      issueNumber: request.issueNumber,
+      issueNumbers,
     };
     await this.writeSpawnInfo(request.workingDirectory, spawnInfo);
 
-    const tabTitle = `Issue #${request.issueNumber}`;
+    // Tab title shows all issues
+    const tabTitle = issueNumbers.length === 1
+      ? `Issue #${issueNumbers[0]}`
+      : `Issues #${issueNumbers.join(', #')}`;
 
     // Build the Claude command
     const claudeCommand = this.buildClaudeCommand(request);
@@ -279,9 +283,12 @@ pause >nul
   private buildClaudeCommand(request: WorkerSpawnRequest): string {
     // Bootstrap instruction tells Claude where to find full instructions
     // The full prompt is already written to .claude/session-prompt.md by writeWorkerPrompt()
-    const bootstrap =
-      `You are an autonomous worker for Issue #${request.issueNumber}. ` +
-      `Read .claude/session-prompt.md for your full instructions and begin.`;
+    const issueNumbers = request.issues.map(i => i.number);
+    const issueLabel = issueNumbers.length === 1
+      ? `Issue #${issueNumbers[0]}`
+      : `Issues #${issueNumbers.join(', #')}`;
+
+    const bootstrap = `You are an autonomous worker for ${issueLabel}. Read .claude/session-prompt.md for your full instructions and begin.`;
 
     // Escape quotes for Windows cmd by doubling them
     const escaped = bootstrap.replace(/"/g, '""');

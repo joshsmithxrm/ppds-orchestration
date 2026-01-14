@@ -1,7 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import SpawnDialog from '../components/SpawnDialog';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { useSoundsContext, useConfigContext } from '../App';
+import { statusColors, statusIcons } from '../constants/status';
 
 interface Session {
   id: string;
@@ -27,33 +29,21 @@ interface Repo {
   };
 }
 
-const statusColors: Record<string, string> = {
-  registered: 'bg-gray-500',
-  planning: 'bg-blue-500',
-  planning_complete: 'bg-purple-500',
-  working: 'bg-green-500',
-  shipping: 'bg-cyan-500',
-  reviews_in_progress: 'bg-cyan-500',
-  pr_ready: 'bg-emerald-400',
-  stuck: 'bg-red-500',
-  paused: 'bg-yellow-500',
-  complete: 'bg-green-600',
-  cancelled: 'bg-gray-600',
-};
+interface OrphanedWorktree {
+  worktreePath: string;
+  branchName?: string;
+  issueNumbers?: number[];
+  sessionId?: string;
+  detectedAt: string;
+  contextError?: string;
+}
 
-const statusIcons: Record<string, string> = {
-  registered: '[ ]',
-  planning: '[~]',
-  planning_complete: '[P]',
-  working: '[*]',
-  shipping: '[>]',
-  reviews_in_progress: '[R]',
-  pr_ready: '[+]',
-  stuck: '[!]',
-  paused: '[||]',
-  complete: '[✓]',
-  cancelled: '[x]',
-};
+interface DeletionState {
+  repoId: string;
+  sessionId: string;
+  showForceOption?: boolean;
+  error?: string;
+}
 
 type FilterCategory = 'active' | 'stuck' | 'completed';
 
@@ -66,9 +56,18 @@ function Dashboard() {
   const [activeFilters, setActiveFilters] = useState<Set<FilterCategory>>(
     new Set(['active', 'stuck'])
   );
+  const [confirmDismiss, setConfirmDismiss] = useState<DeletionState | null>(null);
+  const [confirmClearCompleted, setConfirmClearCompleted] = useState(false);
+  const [clearingCompleted, setClearingCompleted] = useState(false);
+  const [orphans, setOrphans] = useState<OrphanedWorktree[]>([]);
+  const [cleaningOrphan, setCleaningOrphan] = useState<string | null>(null);
+  const [wsConnected, setWsConnected] = useState(true);
+  const [, setTick] = useState(0); // Force re-render for elapsed time updates
   const sounds = useSoundsContext();
   const config = useConfigContext();
   const prevSessionsRef = useRef<Map<string, string>>(new Map());
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectAttemptRef = useRef(0);
 
   // Map session status to filter category
   const getSessionCategory = (status: string): FilterCategory | null => {
@@ -112,9 +111,10 @@ function Dashboard() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [sessionsRes, reposRes] = await Promise.all([
+        const [sessionsRes, reposRes, orphansRes] = await Promise.all([
           fetch('/api/sessions?includeCompleted=true'),
           fetch('/api/repos'),
+          fetch('/api/sessions/orphans'),
         ]);
 
         if (!sessionsRes.ok || !reposRes.ok) {
@@ -135,6 +135,12 @@ function Dashboard() {
 
         setSessions(loadedSessions);
         setRepos(reposData.repos || []);
+
+        // Load orphans (non-fatal if it fails)
+        if (orphansRes.ok) {
+          const orphansData = await orphansRes.json();
+          setOrphans(orphansData.orphans || []);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
@@ -144,62 +150,101 @@ function Dashboard() {
 
     fetchData();
 
-    // Set up WebSocket for real-time updates
-    const ws = new WebSocket(`ws://${window.location.host}/ws`);
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'session:add' && data.session) {
-        setSessions((prev) => {
-          // Check if session already exists
-          const exists = prev.some(
-            (s) => s.id === data.sessionId && s.repoId === data.repoId
-          );
-          if (exists) return prev;
-          return [...prev, { ...data.session, repoId: data.repoId }];
-        });
-        // Play spawn sound for new session (respects muteRalph)
-        if (data.session.status === 'working' || data.session.status === 'registered') {
-          if (shouldPlaySound(data.session)) {
-            sounds?.playOnSpawn();
-          }
-        }
-      } else if (data.type === 'session:update' && data.session) {
-        const key = `${data.repoId}:${data.sessionId}`;
-        const prevStatus = prevSessionsRef.current.get(key);
-        const newStatus = data.session.status;
+    // Set up WebSocket for real-time updates with reconnection
+    const connectWebSocket = () => {
+      const ws = new WebSocket(`ws://${window.location.host}/ws`);
+      wsRef.current = ws;
 
-        // Play sounds on status transitions (respects muteRalph)
-        if (prevStatus !== newStatus) {
-          if (shouldPlaySound(data.session)) {
-            if (newStatus === 'stuck') {
-              sounds?.playOnStuck();
-            } else if (newStatus === 'complete') {
-              sounds?.playOnComplete();
+      ws.onopen = () => {
+        setWsConnected(true);
+        reconnectAttemptRef.current = 0;
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'session:add' && data.session) {
+          setSessions((prev) => {
+            // Check if session already exists
+            const exists = prev.some(
+              (s) => s.id === data.sessionId && s.repoId === data.repoId
+            );
+            if (exists) return prev;
+            return [...prev, { ...data.session, repoId: data.repoId }];
+          });
+          // Play spawn sound for new session (respects muteRalph)
+          if (data.session.status === 'working' || data.session.status === 'registered') {
+            if (shouldPlaySound(data.session)) {
+              sounds?.playOnSpawn();
             }
           }
-          prevSessionsRef.current.set(key, newStatus);
-        }
+        } else if (data.type === 'session:update' && data.session) {
+          const key = `${data.repoId}:${data.sessionId}`;
+          const prevStatus = prevSessionsRef.current.get(key);
+          const newStatus = data.session.status;
 
-        setSessions((prev) =>
-          prev.map((s) =>
-            s.id === data.sessionId && s.repoId === data.repoId
-              ? { ...data.session, repoId: data.repoId }
-              : s
-          )
-        );
-      } else if (data.type === 'session:remove') {
-        const key = `${data.repoId}:${data.sessionId}`;
-        prevSessionsRef.current.delete(key);
-        setSessions((prev) =>
-          prev.filter(
-            (s) => !(s.id === data.sessionId && s.repoId === data.repoId)
-          )
-        );
-      }
+          // Play sounds on status transitions (respects muteRalph)
+          if (prevStatus !== newStatus) {
+            if (shouldPlaySound(data.session)) {
+              if (newStatus === 'stuck') {
+                sounds?.playOnStuck();
+              } else if (newStatus === 'complete') {
+                sounds?.playOnComplete();
+              }
+            }
+            prevSessionsRef.current.set(key, newStatus);
+          }
+
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === data.sessionId && s.repoId === data.repoId
+                ? { ...data.session, repoId: data.repoId }
+                : s
+            )
+          );
+        } else if (data.type === 'session:remove') {
+          const key = `${data.repoId}:${data.sessionId}`;
+          prevSessionsRef.current.delete(key);
+          setSessions((prev) =>
+            prev.filter(
+              (s) => !(s.id === data.sessionId && s.repoId === data.repoId)
+            )
+          );
+        } else if (data.type === 'orphans:detected' && data.orphans) {
+          setOrphans(data.orphans);
+        }
+      };
+
+      ws.onerror = () => {
+        setWsConnected(false);
+      };
+
+      ws.onclose = () => {
+        setWsConnected(false);
+        wsRef.current = null;
+        // Reconnect with exponential backoff (max 30 seconds)
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptRef.current), 30000);
+        reconnectAttemptRef.current++;
+        setTimeout(connectWebSocket, delay);
+      };
     };
 
-    return () => ws.close();
-  }, [sounds]);
+    connectWebSocket();
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.onclose = null; // Prevent reconnection on unmount
+        wsRef.current.close();
+      }
+    };
+  }, [sounds, config]);
+
+  // Update elapsed time display every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTick((t) => t + 1);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const getElapsedTime = (startedAt: string): string => {
     const start = new Date(startedAt).getTime();
@@ -213,14 +258,14 @@ function Dashboard() {
 
   const handleSpawn = async (
     repoId: string,
-    issueNumber: number,
+    issueNumbers: number[],
     mode: 'single' | 'ralph',
     iterations?: number
   ) => {
     const res = await fetch(`/api/sessions/${repoId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ issueNumber, mode, iterations }),
+      body: JSON.stringify({ issueNumbers, mode, iterations }),
     });
 
     if (!res.ok) {
@@ -231,12 +276,46 @@ function Dashboard() {
     // Session will be added via WebSocket event
   };
 
-  const handleDismissSession = async (repoId: string, sessionId: string, e: React.MouseEvent) => {
+  const handleDismissClick = (repoId: string, sessionId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    setConfirmDismiss({ repoId, sessionId });
+  };
+
+  const handleConfirmDismiss = async (force?: boolean) => {
+    if (!confirmDismiss) return;
+    const { repoId, sessionId } = confirmDismiss;
     try {
-      const res = await fetch(`/api/sessions/${repoId}/${sessionId}`, {
-        method: 'DELETE',
+      const url = new URL(`/api/sessions/${repoId}/${sessionId}`, window.location.origin);
+      if (force) url.searchParams.set('force', 'true');
+
+      const res = await fetch(url.toString(), { method: 'DELETE' });
+      const data = await res.json();
+
+      if (res.ok) {
+        setSessions((prev) =>
+          prev.filter((s) => !(s.id === sessionId && s.repoId === repoId))
+        );
+        setConfirmDismiss(null);
+      } else if (data.deletionFailed) {
+        // Show force delete option
+        setConfirmDismiss({
+          repoId,
+          sessionId,
+          showForceOption: true,
+          error: data.error,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to dismiss session:', err);
+      setConfirmDismiss(null);
+    }
+  };
+
+  const handleRetryDelete = async (repoId: string, sessionId: string) => {
+    try {
+      const res = await fetch(`/api/sessions/${repoId}/${sessionId}/retry-delete`, {
+        method: 'PATCH',
       });
       if (res.ok) {
         setSessions((prev) =>
@@ -244,11 +323,54 @@ function Dashboard() {
         );
       }
     } catch (err) {
-      console.error('Failed to dismiss session:', err);
+      console.error('Failed to retry deletion:', err);
     }
   };
 
-  const handleClearCompleted = async () => {
+  const handleRollbackDelete = async (repoId: string, sessionId: string) => {
+    try {
+      const res = await fetch(`/api/sessions/${repoId}/${sessionId}/rollback-delete`, {
+        method: 'PATCH',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === sessionId && s.repoId === repoId
+              ? { ...s, ...data.session }
+              : s
+          )
+        );
+      }
+    } catch (err) {
+      console.error('Failed to rollback deletion:', err);
+    }
+  };
+
+  const handleCleanupOrphan = async (repoId: string, worktreePath: string) => {
+    setCleaningOrphan(worktreePath);
+    try {
+      const res = await fetch(`/api/sessions/orphans/${repoId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ worktreePath }),
+      });
+      if (res.ok) {
+        setOrphans((prev) => prev.filter((o) => o.worktreePath !== worktreePath));
+      }
+    } catch (err) {
+      console.error('Failed to cleanup orphan:', err);
+    } finally {
+      setCleaningOrphan(null);
+    }
+  };
+
+  const handleClearCompletedClick = () => {
+    setConfirmClearCompleted(true);
+  };
+
+  const handleConfirmClearCompleted = async () => {
+    setClearingCompleted(true);
     const completedSessions = sessions.filter((s) => s.status === 'complete');
     for (const session of completedSessions) {
       try {
@@ -262,6 +384,8 @@ function Dashboard() {
         console.error('Failed to clear session:', err);
       }
     }
+    setClearingCompleted(false);
+    setConfirmClearCompleted(false);
   };
 
   if (loading) {
@@ -293,14 +417,31 @@ function Dashboard() {
   // Filter sessions based on active filters
   const filteredSessions = sessions.filter((s) => {
     const category = getSessionCategory(s.status);
-    return category && activeFilters.has(category);
+    return category !== null && activeFilters.has(category);
   });
 
   return (
     <div className="space-y-6">
+      {/* Connection Warning */}
+      {!wsConnected && (
+        <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg px-4 py-2 flex items-center gap-2">
+          <svg className="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span className="text-yellow-300 text-sm">
+            Live updates disconnected. Reconnecting...
+          </span>
+        </div>
+      )}
+
       {/* Header with Spawn Button */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-white">Dashboard</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-semibold text-white">Dashboard</h2>
+          {wsConnected && (
+            <span className="w-2 h-2 bg-green-500 rounded-full" title="Live updates connected" />
+          )}
+        </div>
         <button
           onClick={() => setShowSpawnDialog(true)}
           className="px-4 py-2 bg-ppds-accent text-ppds-bg font-semibold rounded hover:bg-ppds-accent/80 transition-colors flex items-center gap-2"
@@ -359,16 +500,68 @@ function Dashboard() {
         </div>
       )}
 
+      {/* Orphaned Worktrees Warning */}
+      {orphans.length > 0 && (
+        <div className="bg-orange-900/30 border border-orange-700 rounded-lg p-4">
+          <h3 className="text-orange-400 font-semibold flex items-center gap-2 mb-3">
+            <span>[?]</span> {orphans.length} orphaned worktree(s) detected
+          </h3>
+          <p className="text-sm text-orange-300 mb-3">
+            These worktrees exist without corresponding session files. They may contain uncommitted work.
+          </p>
+          <div className="space-y-2">
+            {orphans.map((orphan) => {
+              const displayName = orphan.worktreePath.split(/[/\\]/).pop() || orphan.worktreePath;
+              return (
+                <div
+                  key={orphan.worktreePath}
+                  className="flex items-center justify-between bg-orange-900/20 rounded px-3 py-2"
+                >
+                  <div>
+                    <div className="text-sm text-orange-200 font-mono">{displayName}</div>
+                    {orphan.issueNumbers && orphan.issueNumbers.length > 0 && (
+                      <div className="text-xs text-orange-400">
+                        Issues: {orphan.issueNumbers.map((n) => `#${n}`).join(', ')}
+                      </div>
+                    )}
+                    {orphan.branchName && (
+                      <div className="text-xs text-gray-500">Branch: {orphan.branchName}</div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      // Extract repoId from path - worktree naming convention: {prefix}issue-{n}
+                      // The repo is determined by matching against configured repos
+                      const matchingRepo = repos.find((r) =>
+                        orphan.worktreePath.toLowerCase().includes(r.id.toLowerCase())
+                      );
+                      if (matchingRepo) {
+                        handleCleanupOrphan(matchingRepo.id, orphan.worktreePath);
+                      }
+                    }}
+                    disabled={cleaningOrphan === orphan.worktreePath}
+                    className="text-sm px-3 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded disabled:opacity-50 transition-colors"
+                  >
+                    {cleaningOrphan === orphan.worktreePath ? 'Cleaning...' : 'Cleanup'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Sessions List */}
       <div className="bg-ppds-card rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">{getFilterLabel()}</h2>
           {completedCount > 0 && (
             <button
-              onClick={handleClearCompleted}
-              className="text-xs text-ppds-muted hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-700"
+              onClick={handleClearCompletedClick}
+              disabled={clearingCompleted}
+              className="text-xs text-ppds-muted hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Clear Completed ({completedCount})
+              {clearingCompleted ? 'Clearing...' : `Clear Completed (${completedCount})`}
             </button>
           )}
         </div>
@@ -401,16 +594,16 @@ function Dashboard() {
                       <div className="font-medium text-white">
                         {session.repoId} #{session.issueNumber}
                       </div>
-                      <div className="text-sm text-gray-400">
+                      <div className="text-sm text-ppds-muted">
                         {session.issueTitle}
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-right">
-                      <div className="text-sm text-gray-400">
+                      <div className="text-sm text-ppds-muted">
                         {session.mode === 'ralph' && (
-                          <span className="text-purple-400 mr-2">[Ralph]</span>
+                          <span className="text-ppds-ralph mr-2">[Ralph]</span>
                         )}
                         {getElapsedTime(session.startedAt)}
                       </div>
@@ -418,13 +611,40 @@ function Dashboard() {
                         {session.branch}
                       </div>
                     </div>
-                    {['complete', 'cancelled'].includes(session.status) && (
+                    {session.status === 'deletion_failed' ? (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleRetryDelete(session.repoId, session.id);
+                          }}
+                          className="text-xs px-2 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
+                          title="Retry deletion"
+                        >
+                          Retry
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleRollbackDelete(session.repoId, session.id);
+                          }}
+                          className="text-xs px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white rounded transition-colors"
+                          title="Cancel deletion"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : ['complete', 'cancelled'].includes(session.status) && (
                       <button
-                        onClick={(e) => handleDismissSession(session.repoId, session.id, e)}
-                        className="text-gray-500 hover:text-red-400 transition-colors p-1"
-                        title="Dismiss"
+                        onClick={(e) => handleDismissClick(session.repoId, session.id, e)}
+                        className="text-gray-400 hover:text-red-400 hover:bg-red-900/30 transition-colors p-2 rounded"
+                        title="Dismiss session"
                       >
-                        ✕
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
                       </button>
                     )}
                   </div>
@@ -445,6 +665,32 @@ function Dashboard() {
         isOpen={showSpawnDialog}
         onClose={() => setShowSpawnDialog(false)}
         onSpawn={handleSpawn}
+      />
+
+      {/* Confirm Dismiss Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDismiss !== null}
+        title={confirmDismiss?.showForceOption ? 'Deletion Failed' : 'Dismiss Session'}
+        message={
+          confirmDismiss?.showForceOption
+            ? `Worktree cleanup failed: ${confirmDismiss.error || 'Unknown error'}. Force delete will remove the session but leave the worktree orphaned.`
+            : 'Are you sure you want to dismiss this session? This will remove it from the list.'
+        }
+        confirmLabel={confirmDismiss?.showForceOption ? 'Force Delete' : 'Dismiss'}
+        variant="danger"
+        onConfirm={() => handleConfirmDismiss(confirmDismiss?.showForceOption)}
+        onCancel={() => setConfirmDismiss(null)}
+      />
+
+      {/* Confirm Clear Completed Dialog */}
+      <ConfirmDialog
+        isOpen={confirmClearCompleted}
+        title="Clear Completed Sessions"
+        message={`Are you sure you want to clear all ${completedCount} completed session(s)? This cannot be undone.`}
+        confirmLabel="Clear All"
+        variant="danger"
+        onConfirm={handleConfirmClearCompleted}
+        onCancel={() => setConfirmClearCompleted(false)}
       />
     </div>
   );

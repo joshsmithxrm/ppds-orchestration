@@ -53,22 +53,34 @@ sessionsRouter.get('/:repoId/:sessionId', async (req: Request, res: Response) =>
 /**
  * POST /api/sessions/:repoId
  * Spawn a new worker session.
- * Body: { issueNumber: number, mode?: 'single' | 'ralph', iterations?: number }
+ * Body: { issueNumber?: number, issueNumbers?: number[], mode?: 'single' | 'ralph', iterations?: number }
+ * - issueNumbers: Array of issue numbers for combined session (preferred)
+ * - issueNumber: Single issue number (backwards compatibility)
  */
 sessionsRouter.post('/:repoId', async (req: Request, res: Response) => {
   try {
     const service: MultiRepoService = req.app.locals.multiRepoService;
     const ralphManager: RalphLoopManager = req.app.locals.ralphManager;
     const { repoId } = req.params;
-    const { issueNumber, mode = 'single', iterations } = req.body;
+    const { issueNumber, issueNumbers, mode = 'single', iterations } = req.body;
 
-    if (!issueNumber || typeof issueNumber !== 'number') {
-      return res.status(400).json({ error: 'issueNumber is required' });
+    // Normalize: prefer issueNumbers array, fall back to single issueNumber
+    let issues: number[];
+    if (issueNumbers && Array.isArray(issueNumbers) && issueNumbers.length > 0) {
+      // Validate all elements are numbers
+      if (!issueNumbers.every((n: unknown) => typeof n === 'number' && n > 0)) {
+        return res.status(400).json({ error: 'issueNumbers must be an array of positive numbers' });
+      }
+      issues = issueNumbers;
+    } else if (typeof issueNumber === 'number' && issueNumber > 0) {
+      issues = [issueNumber];
+    } else {
+      return res.status(400).json({ error: 'issueNumber or issueNumbers is required' });
     }
 
     const session = await service.spawn(
       repoId,
-      issueNumber,
+      issues,
       mode as ExecutionMode
     );
 
@@ -116,7 +128,7 @@ sessionsRouter.patch('/:repoId/:sessionId', async (req: Request, res: Response) 
         break;
 
       case 'cancel':
-        await service.cancel(repoId, sessionId);
+        await service.delete(repoId, sessionId);
         return res.json({ success: true });
 
       case 'update':
@@ -145,20 +157,135 @@ sessionsRouter.patch('/:repoId/:sessionId', async (req: Request, res: Response) 
 /**
  * DELETE /api/sessions/:repoId/:sessionId
  * Cancel and remove a session.
+ * Query params:
+ *   - keepWorktree=true: Don't remove worktree
+ *   - force=true: Delete session even if worktree cleanup fails
  */
 sessionsRouter.delete('/:repoId/:sessionId', async (req: Request, res: Response) => {
   try {
     const service: MultiRepoService = req.app.locals.multiRepoService;
     const { repoId, sessionId } = req.params;
     const keepWorktree = req.query.keepWorktree === 'true';
+    const force = req.query.force === 'true';
 
-    await service.cancel(repoId, sessionId, keepWorktree);
+    const result = await service.delete(repoId, sessionId, { keepWorktree, force });
 
-    res.json({ success: true });
+    if (!result.success && !force) {
+      // Return 409 Conflict for deletion failures
+      return res.status(409).json({
+        error: result.error,
+        deletionFailed: true,
+        orphanedWorktreePath: result.orphanedWorktreePath,
+        canRetry: true,
+        canForce: true,
+      });
+    }
+
+    res.json({
+      success: result.success,
+      worktreeRemoved: result.worktreeRemoved,
+      orphanedWorktreePath: result.orphanedWorktreePath,
+    });
   } catch (error) {
     console.error('Error deleting session:', error);
     res.status(500).json({
       error: error instanceof Error ? error.message : 'Failed to delete session',
+    });
+  }
+});
+
+/**
+ * PATCH /api/sessions/:repoId/:sessionId/retry-delete
+ * Retry deletion for a session in deletion_failed state.
+ */
+sessionsRouter.patch('/:repoId/:sessionId/retry-delete', async (req: Request, res: Response) => {
+  try {
+    const service: MultiRepoService = req.app.locals.multiRepoService;
+    const { repoId, sessionId } = req.params;
+
+    const result = await service.retryDelete(repoId, sessionId);
+
+    if (!result.success) {
+      return res.status(409).json({
+        error: result.error,
+        deletionFailed: true,
+        canRetry: true,
+        canForce: true,
+      });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error retrying deletion:', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Failed to retry deletion',
+    });
+  }
+});
+
+/**
+ * PATCH /api/sessions/:repoId/:sessionId/rollback-delete
+ * Rollback a deletion_failed session to its previous state.
+ */
+sessionsRouter.patch('/:repoId/:sessionId/rollback-delete', async (req: Request, res: Response) => {
+  try {
+    const service: MultiRepoService = req.app.locals.multiRepoService;
+    const { repoId, sessionId } = req.params;
+
+    const session = await service.rollbackDeletion(repoId, sessionId);
+    res.json({ session, repoId });
+  } catch (error) {
+    console.error('Error rolling back deletion:', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Failed to rollback deletion',
+    });
+  }
+});
+
+/**
+ * GET /api/orphans
+ * List all detected orphaned worktrees across all repos.
+ */
+sessionsRouter.get('/orphans', async (req: Request, res: Response) => {
+  try {
+    const service: MultiRepoService = req.app.locals.multiRepoService;
+    const orphans = await service.reconcileOrphans();
+    res.json({ orphans, count: orphans.length });
+  } catch (error) {
+    console.error('Error listing orphans:', error);
+    res.status(500).json({ error: 'Failed to list orphans' });
+  }
+});
+
+/**
+ * DELETE /api/orphans/:repoId
+ * Clean up an orphaned worktree.
+ * Body: { worktreePath: string }
+ */
+sessionsRouter.delete('/orphans/:repoId', async (req: Request, res: Response) => {
+  try {
+    const service: MultiRepoService = req.app.locals.multiRepoService;
+    const { repoId } = req.params;
+    const { worktreePath } = req.body;
+
+    if (!worktreePath) {
+      return res.status(400).json({ error: 'worktreePath is required' });
+    }
+
+    const result = await service.cleanupOrphan(repoId, worktreePath);
+
+    if (!result.success) {
+      return res.status(409).json({
+        error: result.error,
+        cleanupFailed: true,
+      });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error cleaning up orphan:', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Failed to cleanup orphan',
     });
   }
 });

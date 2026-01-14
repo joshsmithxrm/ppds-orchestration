@@ -1,7 +1,7 @@
 import { simpleGit, SimpleGit } from 'simple-git';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { WorktreeStatus } from '../session/types.js';
+import { WorktreeStatus, WorktreeRemovalResult } from '../session/types.js';
 
 /**
  * Git utility functions for worktree and repository operations.
@@ -120,12 +120,25 @@ export class GitUtils {
 
   /**
    * Removes a git worktree.
+   * Returns a result object indicating success or failure.
    */
-  async removeWorktree(worktreePath: string): Promise<void> {
+  async removeWorktree(worktreePath: string): Promise<WorktreeRemovalResult> {
     try {
       await this.git.raw(['worktree', 'remove', worktreePath, '--force']);
-    } catch {
-      // Worktree might not exist, ignore error
+      return { success: true };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+
+      // These errors mean the worktree doesn't exist - that's not a failure
+      if (
+        msg.includes('is not a working tree') ||
+        msg.includes('not a valid') ||
+        msg.includes('is not a valid path')
+      ) {
+        return { success: true, notFound: true };
+      }
+
+      return { success: false, error: msg };
     }
   }
 
@@ -197,5 +210,42 @@ export class GitUtils {
 
     const stat = fs.statSync(gitPath);
     return stat.isFile(); // Worktrees have .git as a file
+  }
+
+  /**
+   * Lists all worktrees for this repository.
+   */
+  async listWorktrees(): Promise<Array<{ path: string; branch: string }>> {
+    const output = await this.git.raw(['worktree', 'list', '--porcelain']);
+    const worktrees: Array<{ path: string; branch: string }> = [];
+
+    let current: { path?: string; branch?: string } = {};
+
+    for (const line of output.split('\n')) {
+      if (line.startsWith('worktree ')) {
+        // If we have a previous worktree, save it
+        if (current.path) {
+          worktrees.push({
+            path: current.path,
+            branch: current.branch ?? '',
+          });
+        }
+        current = { path: line.slice('worktree '.length).trim() };
+      } else if (line.startsWith('branch ')) {
+        // Extract branch name from refs/heads/xxx
+        const ref = line.slice('branch '.length).trim();
+        current.branch = ref.replace('refs/heads/', '');
+      }
+    }
+
+    // Push the last worktree if present
+    if (current.path) {
+      worktrees.push({
+        path: current.path,
+        branch: current.branch ?? '',
+      });
+    }
+
+    return worktrees;
   }
 }
