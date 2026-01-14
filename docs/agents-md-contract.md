@@ -30,9 +30,9 @@ The orchestrator generates AGENTS.md dynamically from:
 
 ## Commands
 | Command | Purpose |
-|---------|---------|
-| {build} | {purpose} |
-| {test} | {purpose} |
+|---|---|
+| `npm run build` | Build all packages |
+| `npm run test` | Run all tests |
 
 ## Key Files
 - {Task-specific files only}
