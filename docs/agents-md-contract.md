@@ -55,7 +55,7 @@ The orchestrator generates AGENTS.md dynamically from:
 
 Per v1 workflow documentation, workers should:
 
-- Start fresh each iteration (no accumulated cruft)
+- Start fresh each iteration without carrying over state from previous runs
 - Stay under 60% context utilization
 - Focus on single atomic task completion
 
