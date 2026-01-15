@@ -112,6 +112,8 @@ export function getRepoEffectiveConfig(
     gitOperations: { commitAfterEach: true, pushAfterEach: true, createPrOnComplete: true },
     doneSignal: { type: 'file' as const, value: '.claude/.ralph-done' },
     iterationDelayMs: 5000,
+    spawner: { type: 'windows-terminal' as const, docker: { image: 'ppds-worker:latest', memoryLimit: '4g', cpuLimit: '2', volumes: [], env: {} } },
+    reviewConfig: { maxCycles: 3, timeoutMs: 300_000 },
   };
 
   return { repoConfig, cliCommand, hooks, ralph };
@@ -164,6 +166,8 @@ export function createDefaultConfig(): CentralConfig {
       gitOperations: { commitAfterEach: true, pushAfterEach: true, createPrOnComplete: true },
       doneSignal: { type: 'file', value: '.claude/.ralph-done' },
       iterationDelayMs: 5000,
+      spawner: { type: 'windows-terminal', docker: { image: 'ppds-worker:latest', memoryLimit: '4g', cpuLimit: '2', volumes: [], env: {} } },
+      reviewConfig: { maxCycles: 3, timeoutMs: 300_000 },
     },
     dashboard: {
       port: 3847,

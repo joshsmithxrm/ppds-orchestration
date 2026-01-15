@@ -54,6 +54,8 @@ export {
   DoneSignalConfig,
   PromiseConfig,
   GitOperationsConfig,
+  SpawnerConfig,
+  ReviewConfig,
 } from './config/central-config.js';
 
 // Config loader utilities

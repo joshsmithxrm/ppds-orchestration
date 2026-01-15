@@ -130,6 +130,43 @@ export const GitOperationsConfig = z.object({
 export type GitOperationsConfig = z.infer<typeof GitOperationsConfig>;
 
 /**
+ * Spawner configuration for worker process management.
+ */
+export const SpawnerConfig = z.object({
+  /** Spawner type: 'windows-terminal' for local dev, 'docker' for containerized */
+  type: z.enum(['windows-terminal', 'docker']).default('windows-terminal'),
+  /** Docker-specific settings (only used when type='docker') */
+  docker: z.object({
+    /** Docker image to use (default: 'ppds-worker:latest') */
+    image: z.string().default('ppds-worker:latest'),
+    /** Memory limit for container (default: '4g') */
+    memoryLimit: z.string().default('4g'),
+    /** CPU limit for container (default: '2') */
+    cpuLimit: z.string().default('2'),
+    /** Additional volume mounts (host:container) */
+    volumes: z.array(z.string()).default([]),
+    /** Additional environment variables */
+    env: z.record(z.string(), z.string()).default({}),
+  }).default({}),
+});
+
+export type SpawnerConfig = z.infer<typeof SpawnerConfig>;
+
+/**
+ * Code review configuration for the review phase.
+ */
+export const ReviewConfig = z.object({
+  /** Maximum number of review cycles before marking as stuck (default: 3) */
+  maxCycles: z.number().default(3),
+  /** Path to the code review agent prompt file (optional, uses example if not set) */
+  agentPromptPath: z.string().optional(),
+  /** Timeout for review agent in milliseconds (default: 300000 = 5 minutes) */
+  timeoutMs: z.number().default(300_000),
+});
+
+export type ReviewConfig = z.infer<typeof ReviewConfig>;
+
+/**
  * Ralph loop execution settings.
  */
 export const RalphConfig = z.object({
@@ -143,6 +180,10 @@ export const RalphConfig = z.object({
   doneSignal: DoneSignalConfig.default({ type: 'file', value: '.claude/.ralph-done' }),
   /** Delay between iterations in ms (default: 5000) */
   iterationDelayMs: z.number().default(5000),
+  /** Spawner configuration - controls how workers are spawned */
+  spawner: SpawnerConfig.default({}),
+  /** Code review configuration - controls the review phase */
+  reviewConfig: ReviewConfig.default({}),
 });
 
 export type RalphConfig = z.infer<typeof RalphConfig>;
