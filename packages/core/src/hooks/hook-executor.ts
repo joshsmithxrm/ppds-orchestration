@@ -102,26 +102,23 @@ export class HookExecutor {
    *
    * Available variables:
    * - ${sessionId} - Session ID (usually issue number as string)
-   * - ${issueNumber} - Primary issue number
-   * - ${issueNumbers} - All issue numbers (comma-separated)
+   * - ${issueNumber} - Issue number
    * - ${repoId} - Repository ID from config
    * - ${worktreePath} - Path to worker's worktree
    * - ${branch} - Git branch name
    * - ${status} - Current session status
-   * - ${issueTitle} - Primary issue title
+   * - ${issueTitle} - Issue title
    */
   private substituteVariables(command: string, context: HookContext): string {
-    const primaryIssue = context.session.issues[0];
-    const issueNumbers = context.session.issues.map(i => i.number).join(',');
+    const issue = context.session.issue;
 
     return command
       .replace(/\$\{sessionId\}/g, context.session.id)
-      .replace(/\$\{issueNumber\}/g, primaryIssue.number.toString())
-      .replace(/\$\{issueNumbers\}/g, issueNumbers)
+      .replace(/\$\{issueNumber\}/g, issue.number.toString())
       .replace(/\$\{repoId\}/g, context.repoId)
       .replace(/\$\{worktreePath\}/g, context.worktreePath)
       .replace(/\$\{branch\}/g, context.session.branch)
       .replace(/\$\{status\}/g, context.session.status)
-      .replace(/\$\{issueTitle\}/g, primaryIssue.title);
+      .replace(/\$\{issueTitle\}/g, issue.title);
   }
 }

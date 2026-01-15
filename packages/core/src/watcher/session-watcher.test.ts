@@ -31,12 +31,12 @@ describe('SessionWatcher', () => {
     body: `Description for issue #${number}`,
   });
 
-  const createTestSession = (id: string, issueNumbers: number[]): SessionState => ({
+  const createTestSession = (id: string, issueNumber: number): SessionState => ({
     id,
-    issues: issueNumbers.map(createTestIssue),
+    issue: createTestIssue(issueNumber),
     status: 'working',
     mode: 'single',
-    branch: issueNumbers.length === 1 ? `issue-${issueNumbers[0]}` : `issues-${issueNumbers.join('-')}`,
+    branch: `issue-${issueNumber}`,
     worktreePath: '/tmp/test',
     startedAt: new Date().toISOString(),
     lastHeartbeat: new Date().toISOString(),
@@ -67,7 +67,7 @@ describe('SessionWatcher', () => {
     it('should emit add events for existing files', async () => {
       // Pre-create sessions directory and file
       fs.mkdirSync(sessionsDir, { recursive: true });
-      const session = createTestSession('42', [42]);
+      const session = createTestSession('42', 42);
       fs.writeFileSync(
         path.join(sessionsDir, 'work-42.json'),
         JSON.stringify(session)
@@ -107,7 +107,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Create initial session file
-      const session = createTestSession('123', [123]);
+      const session = createTestSession('123', 123);
       const filePath = path.join(sessionsDir, 'work-123.json');
       fs.writeFileSync(filePath, JSON.stringify(session));
 
@@ -135,7 +135,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Create session file
-      const session = createTestSession('456', [456]);
+      const session = createTestSession('456', 456);
       const filePath = path.join(sessionsDir, 'work-456.json');
       fs.writeFileSync(filePath, JSON.stringify(session));
 
@@ -201,7 +201,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Create session file
-      const session = createTestSession('100', [100]);
+      const session = createTestSession('100', 100);
       fs.writeFileSync(
         path.join(sessionsDir, 'work-100.json'),
         JSON.stringify(session)
@@ -223,7 +223,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Create session file
-      const session = createTestSession('200', [200]);
+      const session = createTestSession('200', 200);
       fs.writeFileSync(
         path.join(sessionsDir, 'work-200.json'),
         JSON.stringify(session)
@@ -248,7 +248,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Create session file
-      const session = createTestSession('300', [300]);
+      const session = createTestSession('300', 300);
       fs.writeFileSync(
         path.join(sessionsDir, 'work-300.json'),
         JSON.stringify(session)
@@ -271,7 +271,7 @@ describe('SessionWatcher', () => {
       watcher.start();
 
       // Test numeric ID
-      const session = createTestSession('123', [123]);
+      const session = createTestSession('123', 123);
       fs.writeFileSync(
         path.join(sessionsDir, 'work-123.json'),
         JSON.stringify(session)

@@ -70,8 +70,8 @@ export class MultiRepoService {
       if (orphans.length > 0) {
         console.warn(`Detected ${orphans.length} orphaned worktree(s) on startup:`);
         for (const orphan of orphans) {
-          const issueInfo = orphan.issueNumbers
-            ? ` (issues: ${orphan.issueNumbers.map(n => `#${n}`).join(', ')})`
+          const issueInfo = orphan.issueNumber
+            ? ` (issue: #${orphan.issueNumber})`
             : '';
           console.warn(`  - ${path.basename(orphan.worktreePath)}${issueInfo}`);
         }
@@ -212,14 +212,14 @@ export class MultiRepoService {
   }
 
   /**
-   * Spawn a new worker.
+   * Spawn a new worker for an issue.
    * @param repoId - Repository ID
-   * @param issueNumbers - Single issue number or array of issue numbers for combined session
+   * @param issueNumber - Issue number to work on
    * @param mode - Execution mode ('single' or 'ralph')
    */
   async spawn(
     repoId: string,
-    issueNumbers: number | number[],
+    issueNumber: number,
     mode: ExecutionMode = 'single'
   ): Promise<SessionState> {
     const service = this.getService(repoId);
@@ -240,7 +240,7 @@ export class MultiRepoService {
       additionalPromptSections.push(onTestHook.value);
     }
 
-    const session = await service.spawn(issueNumbers, { mode, additionalPromptSections });
+    const session = await service.spawn(issueNumber, { mode, additionalPromptSections });
 
     // Execute onSpawn command hook after successful spawn
     await this.executeHook('onSpawn', repoId, session);
@@ -408,14 +408,14 @@ export class MultiRepoService {
 
       // This is an orphan - try to recover context
       const store = new SessionStore(repoId);
-      let issueNumbers: number[] | undefined;
+      let issueNumber: number | undefined;
       let sessionId: string | undefined;
       let contextError: string | undefined;
 
       try {
         const context = await store.readSessionContext(wt.path);
         if (context) {
-          issueNumbers = context.issues.map(i => i.number);
+          issueNumber = context.issue.number;
           sessionId = context.sessionId;
         }
       } catch (error) {
@@ -425,7 +425,7 @@ export class MultiRepoService {
       orphans.push({
         worktreePath: wt.path,
         branchName: wt.branch,
-        issueNumbers,
+        issueNumber,
         sessionId,
         detectedAt: new Date().toISOString(),
         contextError,

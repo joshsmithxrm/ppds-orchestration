@@ -15,7 +15,7 @@ describe('RalphLoopManager', () => {
 
   const createMockSession = (overrides: Partial<SessionState> = {}): SessionState => ({
     id: '1',
-    issues: [{ number: 1, title: 'Test Issue', body: 'Test body' }],
+    issue: { number: 1, title: 'Test Issue', body: 'Test body' },
     status: 'working',
     mode: 'ralph',
     branch: 'issue-1',
@@ -35,6 +35,8 @@ describe('RalphLoopManager', () => {
     },
     doneSignal: { type: 'file', value: '.claude/.ralph-done' },
     iterationDelayMs: 5000,
+    spawner: { type: 'windows-terminal', docker: { image: 'ppds-worker:latest', memoryLimit: '4g', cpuLimit: '2', volumes: [], env: {} } },
+    reviewConfig: { maxCycles: 3, timeoutMs: 300_000 },
     ...overrides,
   });
 
