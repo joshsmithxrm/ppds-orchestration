@@ -1,5 +1,10 @@
+function greet(name: string): void {
+  console.log(`Hello, ${name}! [${Date.now()}]`);
+}
+
 function main(): void {
-  console.log("Hello from orchestration!");
+  const name = process.argv[2] || "orchestration";
+  greet(name);
 }
 
 main();
