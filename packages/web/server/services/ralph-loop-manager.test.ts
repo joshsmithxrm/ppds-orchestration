@@ -581,4 +581,491 @@ describe('RalphLoopManager', () => {
       expect(state.consecutiveFailures).toBe(0);
     });
   });
+
+  describe('Poll cycle integration', () => {
+    let noGitManager: RalphLoopManager;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+
+      // Create a manager with git operations disabled to avoid async exec interference
+      const noGitConfig: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+      noGitManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        noGitConfig
+      );
+    });
+
+    afterEach(async () => {
+      // Stop all loops before restoring timers
+      noGitManager.stopLoop('test-repo', '1');
+      manager.stopLoop('test-repo', '1');
+      vi.useRealTimers();
+      // Allow any pending I/O to settle
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    it('should update lastChecked timestamp on poll', async () => {
+      const mockSession = createMockSession({ status: 'working' });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const state = await noGitManager.startLoop('test-repo', '1');
+      expect(state.lastChecked).toBeUndefined();
+
+      // Advance timer to trigger poll
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(state.lastChecked).toBeDefined();
+    });
+
+    it('should not poll loops that are not in running state', async () => {
+      const mockSession = createMockSession({ status: 'working' });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const state = await noGitManager.startLoop('test-repo', '1');
+      state.state = 'paused';
+
+      const initialChecked = state.lastChecked;
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // lastChecked should not have changed since loop is paused
+      expect(state.lastChecked).toBe(initialChecked);
+    });
+
+    it('should trigger handleIterationComplete when session status is complete', async () => {
+      // Set targetIterations to 1 so we get loop_done instead of waiting for next iteration
+      const singleIterConfig: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          maxIterations: 1,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+      const singleIterManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        singleIterConfig
+      );
+
+      const mockSession = createMockSession({ status: 'complete' });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      singleIterManager.onEvent(callback);
+
+      await singleIterManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // iteration_end should be emitted when session completes
+      expect(callback).toHaveBeenCalledWith(
+        'iteration_end',
+        expect.objectContaining({
+          repoId: 'test-repo',
+          sessionId: '1',
+        })
+      );
+
+      singleIterManager.stopLoop('test-repo', '1');
+    });
+
+    it('should handle loop stuck when session is stuck', async () => {
+      const mockSession = createMockSession({
+        status: 'stuck',
+        stuckReason: 'Test stuck reason',
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      noGitManager.onEvent(callback);
+
+      const state = await noGitManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(callback).toHaveBeenCalledWith('loop_stuck', expect.any(Object));
+      expect(state.state).toBe('stuck');
+    });
+
+    it('should stop loop when session is cancelled', async () => {
+      const mockSession = createMockSession({ status: 'cancelled' });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      await noGitManager.startLoop('test-repo', '1');
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(noGitManager.getLoopState('test-repo', '1')).toBeNull();
+    });
+
+    it('should handle loop stuck when session no longer exists', async () => {
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(null);
+
+      const callback = vi.fn();
+      noGitManager.onEvent(callback);
+
+      const state = await noGitManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(callback).toHaveBeenCalledWith('loop_stuck', expect.any(Object));
+      expect(state.state).toBe('stuck');
+    });
+  });
+
+  describe('checkDoneSignal behavior', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(async () => {
+      manager.stopLoop('test-repo', '1');
+      vi.useRealTimers();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    it('should detect status type done signal when session.status matches value', async () => {
+      const configWithStatusSignal: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          doneSignal: { type: 'status', value: 'pr_ready' },
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+
+      const statusManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithStatusSignal
+      );
+
+      const mockSession = createMockSession({ status: 'pr_ready' });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      statusManager.onEvent(callback);
+
+      await statusManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(callback).toHaveBeenCalledWith('loop_done', expect.any(Object));
+
+      statusManager.stopLoop('test-repo', '1');
+    });
+
+    it('should detect file type done signal when file exists in worktree', async () => {
+      // Create manager with git operations disabled
+      const noGitConfig: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+      const noGitManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        noGitConfig
+      );
+
+      // Create the done signal file in the temp directory
+      const doneDir = path.join(tempDir, '.claude');
+      fsActual.mkdirSync(doneDir, { recursive: true });
+      fsActual.writeFileSync(path.join(doneDir, '.ralph-done'), 'done');
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      noGitManager.onEvent(callback);
+
+      await noGitManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(callback).toHaveBeenCalledWith('loop_done', expect.any(Object));
+
+      noGitManager.stopLoop('test-repo', '1');
+    });
+
+    it('should not detect file type done signal when file does not exist', async () => {
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      manager.onEvent(callback);
+
+      await manager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // Should not emit loop_done since file doesn't exist
+      expect(callback).not.toHaveBeenCalledWith('loop_done', expect.any(Object));
+    });
+
+    it('should return false for exit_code type (not implemented)', async () => {
+      const configWithExitCodeSignal: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          doneSignal: { type: 'exit_code', value: '0' },
+        }),
+      };
+
+      const exitCodeManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithExitCodeSignal
+      );
+
+      const mockSession = createMockSession({ status: 'working' });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      exitCodeManager.onEvent(callback);
+
+      await exitCodeManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // Should not emit loop_done since exit_code always returns false
+      expect(callback).not.toHaveBeenCalledWith('loop_done', expect.any(Object));
+
+      exitCodeManager.stopLoop('test-repo', '1');
+    });
+  });
+
+  describe('checkPromise behavior with isPromiseMet', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(async () => {
+      manager.stopLoop('test-repo', '1');
+      vi.useRealTimers();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    it('should detect plan_complete promise when all tasks are marked complete', async () => {
+      // Create manager with git operations disabled
+      const noGitConfig: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+      const noGitManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        noGitConfig
+      );
+
+      // Create a plan file with all tasks complete
+      const planContent = `# Implementation Plan
+
+### Task 0: Setup
+- [x] **Description**: Initial setup
+- **Phase**: 0
+- **Depends-On**: None
+- **Acceptance**: Done
+
+### Task 1: Feature
+- [x] **Description**: Implement feature
+- **Phase**: 1
+- **Depends-On**: 0
+- **Acceptance**: Tests pass
+`;
+
+      fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      noGitManager.onEvent(callback);
+
+      await noGitManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // loop_done should be called since promise is met
+      expect(callback).toHaveBeenCalledWith('loop_done', expect.any(Object));
+
+      // Check the iteration exit type is promise_met
+      const state = callback.mock.calls.find(
+        (call) => call[0] === 'loop_done'
+      )?.[1] as RalphLoopState;
+      expect(state?.iterations[0].exitType).toBe('promise_met');
+
+      noGitManager.stopLoop('test-repo', '1');
+    });
+
+    it('should not detect plan_complete promise when tasks are incomplete', async () => {
+      // Create a plan file with incomplete tasks
+      const planContent = `# Implementation Plan
+
+### Task 0: Setup
+- [x] **Description**: Initial setup
+- **Phase**: 0
+- **Depends-On**: None
+- **Acceptance**: Done
+
+### Task 1: Feature
+- [ ] **Description**: Implement feature
+- **Phase**: 1
+- **Depends-On**: 0
+- **Acceptance**: Tests pass
+`;
+
+      fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      manager.onEvent(callback);
+
+      await manager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // loop_done should NOT be called since tasks are incomplete
+      expect(callback).not.toHaveBeenCalledWith('loop_done', expect.any(Object));
+    });
+
+    it('should not detect plan_complete promise when plan file does not exist', async () => {
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      manager.onEvent(callback);
+
+      await manager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // loop_done should NOT be called since plan file doesn't exist
+      expect(callback).not.toHaveBeenCalledWith('loop_done', expect.any(Object));
+    });
+
+    it('should detect file type promise when file exists', async () => {
+      const configWithFilePromise: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'file', value: 'dist/output.js' },
+          doneSignal: { type: 'exit_code', value: '0' }, // Use exit_code to avoid done signal interference
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+
+      const fileManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithFilePromise
+      );
+
+      // Create the promise file
+      fsActual.mkdirSync(path.join(tempDir, 'dist'), { recursive: true });
+      fsActual.writeFileSync(path.join(tempDir, 'dist', 'output.js'), 'module.exports = {}');
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      fileManager.onEvent(callback);
+
+      await fileManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(callback).toHaveBeenCalledWith('loop_done', expect.any(Object));
+
+      fileManager.stopLoop('test-repo', '1');
+    });
+
+    it('should not detect file type promise when file does not exist', async () => {
+      const configWithFilePromise: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'file', value: 'dist/output.js' },
+          doneSignal: { type: 'exit_code', value: '0' }, // Use exit_code to avoid done signal interference
+        }),
+      };
+
+      const fileManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithFilePromise
+      );
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      fileManager.onEvent(callback);
+
+      await fileManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // loop_done should NOT be called since file doesn't exist
+      expect(callback).not.toHaveBeenCalledWith('loop_done', expect.any(Object));
+
+      fileManager.stopLoop('test-repo', '1');
+    });
+  });
 });
