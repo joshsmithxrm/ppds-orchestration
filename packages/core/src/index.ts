@@ -103,3 +103,18 @@ export {
   isPromiseMet,
 } from './utils/plan-parser.js';
 export type { Task, PlanSummary, ParsedPlan } from './utils/plan-parser.js';
+
+// Checkbox sync utilities
+export { syncCheckboxesToIssue } from './utils/checkbox-sync.js';
+export type { CheckboxSyncResult } from './utils/checkbox-sync.js';
+
+// Progress tracker utilities
+export {
+  appendProgress,
+  readProgress,
+  getLatestProgress,
+  calculateCompletionPercentage,
+  formatProgressEntry,
+  getProgressFilePath,
+} from './utils/progress-tracker.js';
+export type { ProgressEntry, ProgressFile } from './utils/progress-tracker.js';
