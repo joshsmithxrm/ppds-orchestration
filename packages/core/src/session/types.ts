@@ -113,6 +113,12 @@ export const SessionState = z.object({
 
   /** Previous status before deletion attempt (for rollback). */
   previousStatus: SessionStatus.optional(),
+
+  /** Current review cycle count (incremented after each NEEDS_WORK verdict). */
+  reviewCycle: z.number().optional(),
+
+  /** Feedback from the last review (used to guide next iteration). */
+  lastReviewFeedback: z.string().optional(),
 });
 
 export type SessionState = z.infer<typeof SessionState>;

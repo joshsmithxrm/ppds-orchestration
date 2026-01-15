@@ -118,3 +118,30 @@ export {
   getProgressFilePath,
 } from './utils/progress-tracker.js';
 export type { ProgressEntry, ProgressFile } from './utils/progress-tracker.js';
+
+// Docker spawner
+export { DockerSpawner } from './spawner/docker-spawner.js';
+export type { DockerSpawnerConfig } from './spawner/docker-spawner.js';
+
+// Review agent
+export { invokeReviewAgent } from './review/review-agent.js';
+export type { ReviewAgentOptions } from './review/review-agent.js';
+export type {
+  ReviewVerdict,
+  ReviewVerdictStatus,
+  ReviewIssue,
+  ReviewCategory,
+  ReviewResult,
+} from './review/types.js';
+
+// PR creator
+export { createPullRequest, generatePRBody } from './git/pr-creator.js';
+export type { CreatePROptions, CreatePRResult } from './git/pr-creator.js';
+
+// GitHub notifications
+export {
+  notifyPRReady,
+  notifyImplementationStuck,
+  notifyReviewStuck,
+} from './notification/github-notifier.js';
+export type { NotificationOptions, NotificationResult } from './notification/github-notifier.js';
