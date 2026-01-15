@@ -8,6 +8,12 @@ import {
   getRepoEffectiveConfig,
   CentralConfig,
   isPromiseMet,
+  invokeReviewAgent,
+  notifyReviewStuck,
+  notifyPRReady,
+  createPullRequest,
+  generatePRBody,
+  ReviewVerdict,
 } from '@ppds-orchestration/core';
 
 const execAsync = promisify(exec);
@@ -52,7 +58,7 @@ export interface RalphLoopState {
   /** Target number of iterations for this loop (from spawn-time options or config default) */
   targetIterations: number;
   currentIteration: number;
-  state: 'running' | 'waiting' | 'done' | 'stuck' | 'paused';
+  state: 'running' | 'waiting' | 'done' | 'stuck' | 'paused' | 'reviewing';
   iterations: RalphIteration[];
   consecutiveFailures: number;
   lastChecked?: string;
@@ -60,6 +66,10 @@ export interface RalphLoopState {
   lastCommit?: GitCommitStatus;
   /** Status of the last git push operation */
   lastPush?: GitPushStatus;
+  /** Current code review cycle (0 = not yet reviewed, increments on NEEDS_WORK) */
+  reviewCycle: number;
+  /** Last review verdict received */
+  lastReviewVerdict?: ReviewVerdict;
 }
 
 /**
@@ -121,6 +131,7 @@ export class RalphLoopManager {
         doneSignalDetected: false,
       }],
       consecutiveFailures: 0,
+      reviewCycle: 0,
     };
 
     this.loops.set(key, state);
@@ -417,6 +428,7 @@ export class RalphLoopManager {
 
   /**
    * Handle promise being met (early successful exit).
+   * Triggers the code review phase before PR creation.
    */
   private async handlePromiseMet(state: RalphLoopState, worktreePath: string): Promise<void> {
     const currentIteration = state.iterations[state.iterations.length - 1];
@@ -424,14 +436,238 @@ export class RalphLoopManager {
     currentIteration.exitType = 'promise_met';
     currentIteration.doneSignalDetected = true;
 
-    // Perform final git operations (PR creation) before stopping
-    await this.performFinalGitOperations(state, worktreePath);
+    // Commit and push before review
+    await this.performGitOperations(state, worktreePath);
 
+    // Enter review phase
+    await this.handleReviewPhase(state, worktreePath);
+  }
+
+  /**
+   * Handle the code review phase.
+   * Invokes the review agent and handles APPROVED/NEEDS_WORK verdicts.
+   */
+  private async handleReviewPhase(state: RalphLoopState, worktreePath: string): Promise<void> {
+    const maxCycles = state.config.reviewConfig?.maxCycles ?? 3;
+    state.state = 'reviewing';
+
+    // Get GitHub info from repo config
+    const repoConfig = this.centralConfig.repos[state.repoId];
+    if (!repoConfig) {
+      this.handleLoopStuck(state, 'Repository config not found');
+      return;
+    }
+
+    // Try to get github owner/repo from config or detect from git
+    let githubOwner = repoConfig.githubOwner;
+    let githubRepo = repoConfig.githubRepo;
+
+    if (!githubOwner || !githubRepo) {
+      // Try to parse from git remote
+      try {
+        const { stdout } = await execAsync('git config --get remote.origin.url', { cwd: worktreePath });
+        const match = stdout.trim().match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+        if (match) {
+          githubOwner = githubOwner ?? match[1];
+          githubRepo = githubRepo ?? match[2];
+        }
+      } catch {
+        // Ignore detection errors
+      }
+    }
+
+    if (!githubOwner || !githubRepo) {
+      console.warn('Ralph: GitHub owner/repo not configured, skipping review phase');
+      await this.handleReviewApproved(state, worktreePath, githubOwner, githubRepo);
+      return;
+    }
+
+    const issueNumber = parseInt(state.sessionId, 10);
+
+    console.log(`Ralph: Starting code review for ${state.repoId}/${state.sessionId} (cycle ${state.reviewCycle + 1}/${maxCycles})`);
+
+    // Invoke the review agent
+    const result = await invokeReviewAgent({
+      worktreePath,
+      githubOwner,
+      githubRepo,
+      issueNumber,
+      agentPromptPath: state.config.reviewConfig?.agentPromptPath,
+      timeoutMs: state.config.reviewConfig?.timeoutMs,
+    });
+
+    if (!result.success || !result.verdict) {
+      // Review failed - treat as NEEDS_WORK
+      console.warn(`Ralph: Review agent failed: ${result.error}`);
+      state.reviewCycle++;
+      state.lastReviewVerdict = {
+        status: 'NEEDS_WORK',
+        summary: result.error ?? 'Review agent failed',
+        feedback: result.error,
+      };
+
+      if (state.reviewCycle >= maxCycles) {
+        await this.handleReviewStuck(state, worktreePath, githubOwner, githubRepo, issueNumber);
+      } else {
+        await this.handleNeedsWork(state, worktreePath);
+      }
+      return;
+    }
+
+    state.lastReviewVerdict = result.verdict;
+
+    if (result.verdict.status === 'APPROVED') {
+      console.log(`Ralph: Code review APPROVED for ${state.repoId}/${state.sessionId}`);
+      await this.handleReviewApproved(state, worktreePath, githubOwner, githubRepo);
+    } else {
+      // NEEDS_WORK
+      state.reviewCycle++;
+      console.log(`Ralph: Code review NEEDS_WORK for ${state.repoId}/${state.sessionId} (cycle ${state.reviewCycle}/${maxCycles})`);
+
+      if (state.reviewCycle >= maxCycles) {
+        await this.handleReviewStuck(state, worktreePath, githubOwner, githubRepo, issueNumber);
+      } else {
+        await this.handleNeedsWork(state, worktreePath);
+      }
+    }
+  }
+
+  /**
+   * Handle APPROVED verdict - create PR and notify.
+   */
+  private async handleReviewApproved(
+    state: RalphLoopState,
+    worktreePath: string,
+    githubOwner?: string,
+    githubRepo?: string
+  ): Promise<void> {
+    const issueNumber = parseInt(state.sessionId, 10);
+
+    // Get session to access issue info
+    const session = await this.multiRepoService.getSession(state.repoId, state.sessionId);
+
+    // Create PR if configured
+    if (state.config.gitOperations.createPrOnComplete && githubOwner && githubRepo) {
+      try {
+        const prBody = generatePRBody({
+          issueNumber,
+          issueTitle: session?.issue.title ?? `Issue #${issueNumber}`,
+          summary: state.lastReviewVerdict?.summary,
+        });
+
+        const prTitle = session?.issue.title
+          ? `feat: ${session.issue.title}`
+          : `feat: implement issue #${issueNumber}`;
+
+        const prResult = await createPullRequest({
+          cwd: worktreePath,
+          githubOwner,
+          githubRepo,
+          title: prTitle,
+          body: prBody,
+        });
+
+        if (prResult.success && prResult.url) {
+          console.log(`Ralph: Created PR ${prResult.url} for ${state.repoId}/${state.sessionId}`);
+
+          // Notify that PR is ready
+          await notifyPRReady({
+            githubOwner,
+            githubRepo,
+            issueNumber,
+            cwd: worktreePath,
+            prUrl: prResult.url,
+            prNumber: prResult.number ?? 0,
+            summary: state.lastReviewVerdict?.summary,
+          });
+        } else {
+          console.warn(`Ralph: PR creation failed: ${prResult.error}`);
+        }
+      } catch (error) {
+        console.warn(`Ralph: PR creation failed for ${state.repoId}/${state.sessionId}:`, (error as Error).message);
+      }
+    }
+
+    // Mark loop as done
     state.state = 'done';
     this.emit('loop_done', state);
     this.stopLoop(state.repoId, state.sessionId);
 
-    console.log(`Ralph loop completed for ${state.repoId}/${state.sessionId}: promise_met`);
+    console.log(`Ralph loop completed for ${state.repoId}/${state.sessionId}: review_approved`);
+  }
+
+  /**
+   * Handle NEEDS_WORK verdict - respawn worker with feedback.
+   */
+  private async handleNeedsWork(state: RalphLoopState, worktreePath: string): Promise<void> {
+    // Format feedback for the worker
+    const feedback = state.lastReviewVerdict?.feedback ?? state.lastReviewVerdict?.summary ?? 'Code review requested changes';
+
+    console.log(`Ralph: Respawning worker with review feedback (cycle ${state.reviewCycle})`);
+
+    // Update session with forwarded message containing review feedback
+    try {
+      const session = await this.multiRepoService.getSession(state.repoId, state.sessionId);
+      if (session) {
+        // Write feedback to a file in the worktree that the worker can read
+        const feedbackPath = path.join(worktreePath, '.claude', 'review-feedback.md');
+        const feedbackContent = [
+          '# Code Review Feedback',
+          '',
+          `**Review Cycle:** ${state.reviewCycle}`,
+          '',
+          '## Summary',
+          state.lastReviewVerdict?.summary ?? 'N/A',
+          '',
+          '## Required Changes',
+          feedback,
+          '',
+          state.lastReviewVerdict?.issues?.length
+            ? '## Issues\n' + state.lastReviewVerdict.issues.map(i => `- [${i.severity}] ${i.description}`).join('\n')
+            : '',
+        ].join('\n');
+
+        await fs.promises.writeFile(feedbackPath, feedbackContent, 'utf-8');
+      }
+    } catch (error) {
+      console.warn('Ralph: Failed to write review feedback:', (error as Error).message);
+    }
+
+    // Start next iteration to address review feedback
+    state.state = 'waiting';
+    setTimeout(() => {
+      this.startNextIteration(state);
+    }, state.config.iterationDelayMs);
+  }
+
+  /**
+   * Handle review stuck - notify and stop loop.
+   */
+  private async handleReviewStuck(
+    state: RalphLoopState,
+    worktreePath: string,
+    githubOwner: string,
+    githubRepo: string,
+    issueNumber: number
+  ): Promise<void> {
+    console.log(`Ralph: Review stuck for ${state.repoId}/${state.sessionId} after ${state.reviewCycle} cycles`);
+
+    // Notify stakeholders
+    try {
+      await notifyReviewStuck({
+        githubOwner,
+        githubRepo,
+        issueNumber,
+        cwd: worktreePath,
+        reviewCycle: state.reviewCycle,
+        lastFeedback: state.lastReviewVerdict?.feedback ?? state.lastReviewVerdict?.summary,
+      });
+    } catch (error) {
+      console.warn('Ralph: Failed to send review stuck notification:', (error as Error).message);
+    }
+
+    // Mark loop as stuck
+    this.handleLoopStuck(state, `Code review failed after ${state.reviewCycle} cycles`);
   }
 
   /**
@@ -540,7 +776,8 @@ export class RalphLoopManager {
 
   /**
    * Perform final git operations when loop completes.
-   * Creates a PR if configured.
+   * Note: PR creation is now handled in handleReviewApproved after code review.
+   * This method is kept for handleLoopDone which bypasses review (e.g., done signal).
    * @param state The current loop state
    * @param worktreePath Path to the git worktree
    */
@@ -548,51 +785,12 @@ export class RalphLoopManager {
     state: RalphLoopState,
     worktreePath: string
   ): Promise<void> {
-    const { gitOperations } = state.config;
+    // Commit and push any remaining changes
+    await this.performGitOperations(state, worktreePath);
 
-    if (!gitOperations.createPrOnComplete) {
-      return;
-    }
-
-    try {
-      // Get the current branch name
-      const { stdout: branchName } = await execAsync(
-        'git rev-parse --abbrev-ref HEAD',
-        { cwd: worktreePath }
-      );
-      const branch = branchName.trim();
-
-      // Don't create PR if on main/master
-      if (branch === 'main' || branch === 'master') {
-        console.log('Ralph: Skipping PR creation - on main/master branch');
-        return;
-      }
-
-      // Generate PR title and body
-      const prTitle = `Ralph: ${state.repoId}/${state.sessionId} completed`;
-      const prBody = [
-        '## Ralph Loop Summary',
-        '',
-        `- **Repository:** ${state.repoId}`,
-        `- **Session:** ${state.sessionId}`,
-        `- **Iterations completed:** ${state.currentIteration}`,
-        `- **Target iterations:** ${state.targetIterations}`,
-        '',
-        '_This PR was automatically created by Ralph loop manager._',
-      ].join('\n');
-
-      // Create the PR using gh CLI
-      await execAsync(
-        `gh pr create --title "${prTitle}" --body "${prBody.replace(/"/g, '\\"')}"`,
-        { cwd: worktreePath }
-      );
-      console.log(`Ralph: Created PR for ${state.repoId}/${state.sessionId}`);
-    } catch (error) {
-      console.warn(
-        `Ralph: PR creation failed for ${state.repoId}/${state.sessionId}:`,
-        (error as Error).message
-      );
-    }
+    // Note: PR creation is now handled in handleReviewPhase/handleReviewApproved
+    // For backwards compatibility with done signal exits, we skip PR here
+    // since those should go through the review phase first
   }
 
   /**

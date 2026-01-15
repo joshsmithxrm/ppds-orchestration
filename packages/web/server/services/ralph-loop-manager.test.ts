@@ -2,7 +2,36 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fsActual from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CentralConfig, RalphConfig, SessionState } from '@ppds-orchestration/core';
+import { CentralConfig, RalphConfig, SessionState, ReviewResult } from '@ppds-orchestration/core';
+
+// Mock the review/notification functions from core
+vi.mock('@ppds-orchestration/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@ppds-orchestration/core')>();
+  return {
+    ...actual,
+    // Default to APPROVED so tests that don't explicitly test review behavior pass
+    invokeReviewAgent: vi.fn().mockResolvedValue({
+      success: true,
+      verdict: { status: 'APPROVED', summary: 'Auto-approved for test' },
+      durationMs: 100,
+    }),
+    notifyReviewStuck: vi.fn().mockResolvedValue({ success: true }),
+    notifyPRReady: vi.fn().mockResolvedValue({ success: true }),
+    createPullRequest: vi.fn().mockResolvedValue({
+      success: true,
+      url: 'https://github.com/test/test/pull/1',
+      number: 1,
+    }),
+    generatePRBody: vi.fn(() => 'Generated PR body'),
+  };
+});
+
+import {
+  invokeReviewAgent,
+  notifyReviewStuck,
+  notifyPRReady,
+  createPullRequest,
+} from '@ppds-orchestration/core';
 
 import { RalphLoopManager, RalphLoopState } from './ralph-loop-manager.js';
 import { MultiRepoService } from './multi-repo-service.js';
@@ -1330,6 +1359,345 @@ describe('RalphLoopManager', () => {
       // Verify the command was executed in the worktreePath by checking the marker file
       expect(fsActual.existsSync(markerFile)).toBe(true);
       expect(fsActual.readFileSync(markerFile, 'utf-8')).toBe('custom-executed');
+    }, 10000);
+  });
+
+  describe('review-cycle', () => {
+    let reviewManager: RalphLoopManager;
+
+    beforeEach(() => {
+      // Reset mocks before each test
+      vi.mocked(invokeReviewAgent).mockReset();
+      vi.mocked(notifyReviewStuck).mockReset();
+      vi.mocked(notifyPRReady).mockReset();
+      vi.mocked(createPullRequest).mockReset();
+    });
+
+    afterEach(async () => {
+      if (reviewManager) {
+        reviewManager.stopLoop('test-repo', '1');
+      }
+      manager.stopLoop('test-repo', '1');
+    });
+
+    it('should initialize reviewCycle to 0 when starting a loop', async () => {
+      const state = await manager.startLoop('test-repo', '1');
+      expect(state.reviewCycle).toBe(0);
+    });
+
+    it('should invoke review agent when promise is met', async () => {
+      // Mock review agent to return APPROVED
+      vi.mocked(invokeReviewAgent).mockResolvedValue({
+        success: true,
+        verdict: { status: 'APPROVED', summary: 'Code looks good' },
+        durationMs: 1000,
+      });
+
+      vi.mocked(createPullRequest).mockResolvedValue({
+        success: true,
+        url: 'https://github.com/test-owner/test-repo/pull/1',
+        number: 1,
+      });
+
+      vi.mocked(notifyPRReady).mockResolvedValue({ success: true });
+
+      const configWithReview: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'plan_complete', value: 'IMPLEMENTATION_PLAN.md' },
+          doneSignal: { type: 'exit_code', value: '0' },
+          iterationDelayMs: 100,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: true,
+          },
+          reviewConfig: { maxCycles: 3, timeoutMs: 300_000 },
+        }),
+      };
+
+      reviewManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithReview
+      );
+
+      // Create a plan file with all tasks complete
+      const planContent = `# Implementation Plan
+
+### Task 0: Setup
+- [x] **Description**: Initial setup
+- **Phase**: 0
+- **Depends-On**: None
+- **Acceptance**: Done
+`;
+
+      fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      reviewManager.onEvent(callback);
+
+      await reviewManager.startLoop('test-repo', '1');
+
+      // Wait for the poll cycle to execute
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // Review agent should have been called
+      expect(invokeReviewAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          worktreePath: tempDir,
+          githubOwner: 'test-owner',
+          githubRepo: 'test-repo',
+          issueNumber: 1,
+        })
+      );
+    }, 10000);
+
+    it('should create PR on APPROVED verdict', async () => {
+      vi.mocked(invokeReviewAgent).mockResolvedValue({
+        success: true,
+        verdict: { status: 'APPROVED', summary: 'Code looks good' },
+        durationMs: 1000,
+      });
+
+      vi.mocked(createPullRequest).mockResolvedValue({
+        success: true,
+        url: 'https://github.com/test-owner/test-repo/pull/1',
+        number: 1,
+      });
+
+      vi.mocked(notifyPRReady).mockResolvedValue({ success: true });
+
+      const configWithReview: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'plan_complete', value: 'IMPLEMENTATION_PLAN.md' },
+          doneSignal: { type: 'exit_code', value: '0' },
+          iterationDelayMs: 100,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: true,
+          },
+        }),
+      };
+
+      reviewManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithReview
+      );
+
+      const planContent = `### Task 0: Setup
+- [x] **Description**: Initial setup
+- **Phase**: 0
+- **Depends-On**: None
+- **Acceptance**: Done
+`;
+      fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      reviewManager.onEvent(callback);
+
+      await reviewManager.startLoop('test-repo', '1');
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // PR should have been created
+      expect(createPullRequest).toHaveBeenCalled();
+
+      // PR ready notification should have been sent
+      expect(notifyPRReady).toHaveBeenCalled();
+
+      // Loop should be done
+      expect(callback).toHaveBeenCalledWith('loop_done', expect.any(Object));
+    }, 10000);
+
+    it('should increment reviewCycle on NEEDS_WORK verdict', async () => {
+      vi.mocked(invokeReviewAgent).mockResolvedValue({
+        success: true,
+        verdict: {
+          status: 'NEEDS_WORK',
+          summary: 'Tests are failing',
+          feedback: 'Please fix the failing tests',
+        },
+        durationMs: 1000,
+      });
+
+      const configWithReview: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'plan_complete', value: 'IMPLEMENTATION_PLAN.md' },
+          doneSignal: { type: 'exit_code', value: '0' },
+          iterationDelayMs: 100,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: true,
+          },
+          reviewConfig: { maxCycles: 3, timeoutMs: 300_000 },
+        }),
+      };
+
+      reviewManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithReview
+      );
+
+      const planContent = `### Task 0: Setup
+- [x] **Description**: Initial setup
+- **Phase**: 0
+- **Depends-On**: None
+- **Acceptance**: Done
+`;
+      fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+      fsActual.mkdirSync(path.join(tempDir, '.claude'), { recursive: true });
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      await reviewManager.startLoop('test-repo', '1');
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // Check that reviewCycle was incremented
+      const state = reviewManager.getLoopState('test-repo', '1');
+      expect(state?.reviewCycle).toBe(1);
+
+      // Check that review feedback file was written
+      const feedbackPath = path.join(tempDir, '.claude', 'review-feedback.md');
+      expect(fsActual.existsSync(feedbackPath)).toBe(true);
+      const feedbackContent = fsActual.readFileSync(feedbackPath, 'utf-8');
+      expect(feedbackContent).toContain('Review Cycle');
+      expect(feedbackContent).toContain('Tests are failing');
+    }, 10000);
+
+    it('should mark stuck after maxCycles NEEDS_WORK verdicts', async () => {
+      vi.mocked(invokeReviewAgent).mockResolvedValue({
+        success: true,
+        verdict: {
+          status: 'NEEDS_WORK',
+          summary: 'Tests are failing',
+          feedback: 'Please fix the failing tests',
+        },
+        durationMs: 1000,
+      });
+
+      vi.mocked(notifyReviewStuck).mockResolvedValue({ success: true });
+
+      const configWithReview: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'plan_complete', value: 'IMPLEMENTATION_PLAN.md' },
+          doneSignal: { type: 'exit_code', value: '0' },
+          iterationDelayMs: 100,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: true,
+          },
+          reviewConfig: { maxCycles: 1, timeoutMs: 300_000 }, // Only 1 cycle allowed
+        }),
+      };
+
+      reviewManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithReview
+      );
+
+      const planContent = `### Task 0: Setup
+- [x] **Description**: Initial setup
+- **Phase**: 0
+- **Depends-On**: None
+- **Acceptance**: Done
+`;
+      fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      reviewManager.onEvent(callback);
+
+      await reviewManager.startLoop('test-repo', '1');
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // Should notify stuck
+      expect(notifyReviewStuck).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reviewCycle: 1,
+          githubOwner: 'test-owner',
+          githubRepo: 'test-repo',
+        })
+      );
+
+      // Loop should be stuck
+      expect(callback).toHaveBeenCalledWith('loop_stuck', expect.any(Object));
+    }, 10000);
+
+    it('should handle review agent failure as NEEDS_WORK', async () => {
+      vi.mocked(invokeReviewAgent).mockResolvedValue({
+        success: false,
+        error: 'Review agent timed out',
+        durationMs: 300_000,
+      });
+
+      const configWithReview: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'plan_complete', value: 'IMPLEMENTATION_PLAN.md' },
+          doneSignal: { type: 'exit_code', value: '0' },
+          iterationDelayMs: 100,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: true,
+          },
+          reviewConfig: { maxCycles: 3, timeoutMs: 300_000 },
+        }),
+      };
+
+      reviewManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithReview
+      );
+
+      const planContent = `### Task 0: Setup
+- [x] **Description**: Initial setup
+- **Phase**: 0
+- **Depends-On**: None
+- **Acceptance**: Done
+`;
+      fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+      fsActual.mkdirSync(path.join(tempDir, '.claude'), { recursive: true });
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      await reviewManager.startLoop('test-repo', '1');
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // Check that reviewCycle was incremented (failure treated as NEEDS_WORK)
+      const state = reviewManager.getLoopState('test-repo', '1');
+      expect(state?.reviewCycle).toBe(1);
+      expect(state?.lastReviewVerdict?.status).toBe('NEEDS_WORK');
     }, 10000);
   });
 });
