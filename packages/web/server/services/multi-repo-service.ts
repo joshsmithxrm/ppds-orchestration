@@ -13,6 +13,8 @@ import {
   HookExecutor,
   OrphanedWorktree,
   DeleteResult,
+  DockerSpawner,
+  WorkerSpawner,
 } from '@ppds-orchestration/core';
 
 export interface MultiRepoSession extends SessionState {
@@ -115,6 +117,13 @@ export class MultiRepoService {
 
     const effectiveConfig = getRepoEffectiveConfig(this.config, repoId);
 
+    // Create spawner based on config (spawner is part of ralph config)
+    let spawner: WorkerSpawner | undefined;
+    if (effectiveConfig.ralph.spawner?.type === 'docker') {
+      spawner = new DockerSpawner(effectiveConfig.ralph.spawner.docker);
+    }
+    // If spawner is undefined, SessionService will use createSpawner() default
+
     return new SessionService({
       projectName: repoId,
       repoRoot: repoConfig.path,
@@ -123,6 +132,7 @@ export class MultiRepoService {
       worktreePrefix: repoConfig.worktreePrefix,
       baseBranch: repoConfig.baseBranch,
       cliCommand: effectiveConfig.cliCommand,
+      spawner,
     });
   }
 

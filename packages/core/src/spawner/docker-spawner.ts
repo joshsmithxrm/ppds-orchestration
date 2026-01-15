@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { WorkerSpawner, SpawnResult, SpawnInfo, WorkerStatus } from './worker-spawner.js';
 import { WorkerSpawnRequest } from '../session/types.js';
@@ -223,6 +224,8 @@ export class DockerSpawner implements WorkerSpawner {
       '-v', `${request.workingDirectory}:/workspace`,
       // Mount prompt file
       '-v', `${request.promptFilePath}:/workspace/.claude/session-prompt.md:ro`,
+      // Mount host's Claude credentials for subscription auth
+      '-v', `${path.join(os.homedir(), '.claude')}:/home/worker/.claude`,
       // Working directory
       '-w', '/workspace',
     ];
@@ -237,6 +240,11 @@ export class DockerSpawner implements WorkerSpawner {
     args.push('-e', `GITHUB_REPO=${request.githubRepo}`);
     args.push('-e', `SESSION_ID=${request.sessionId}`);
     args.push('-e', `ISSUE_NUMBER=${request.issue.number}`);
+
+    // Pass through API key from host environment
+    if (process.env.ANTHROPIC_API_KEY) {
+      args.push('-e', `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
+    }
 
     for (const [key, value] of Object.entries(this.config.env)) {
       args.push('-e', `${key}=${value}`);
