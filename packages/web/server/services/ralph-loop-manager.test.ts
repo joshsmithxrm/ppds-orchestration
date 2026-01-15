@@ -4,20 +4,6 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { CentralConfig, RalphConfig, SessionState } from '@ppds-orchestration/core';
 
-// Create a controlled mock for execAsync that we can configure in tests
-const mockExecAsync = vi.fn();
-
-// Mock the entire ralph-loop-manager module to inject our mock execAsync
-vi.mock('./ralph-loop-manager.js', async (importOriginal) => {
-  // We need to manually create a class that uses our mockExecAsync
-  // This is the cleanest way to test without modifying the source code
-  const actual = await importOriginal<typeof import('./ralph-loop-manager.js')>();
-  return actual;
-});
-
-// Instead of mocking at module level, we'll test through the public interface
-// and use a wrapper to inject mocked behavior
-
 import { RalphLoopManager, RalphLoopState } from './ralph-loop-manager.js';
 import { MultiRepoService } from './multi-repo-service.js';
 
@@ -1067,5 +1053,281 @@ describe('RalphLoopManager', () => {
 
       fileManager.stopLoop('test-repo', '1');
     });
+  });
+
+  describe('tests_pass promise type integration', () => {
+    // Use real timers for exec-based tests since execAsync needs real time
+    let testsManager: RalphLoopManager;
+
+    afterEach(async () => {
+      if (testsManager) {
+        testsManager.stopLoop('test-repo', '1');
+      }
+      manager.stopLoop('test-repo', '1');
+    });
+
+    it('should return true when test command exits successfully (exit code 0)', async () => {
+      // Use node -e to execute a simple exit(0) command that works cross-platform
+      const configWithTestsPromise: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'tests_pass', value: 'node -e "process.exit(0)"' },
+          doneSignal: { type: 'exit_code', value: '0' }, // Use exit_code to avoid done signal interference
+          iterationDelayMs: 100, // Short delay for faster tests
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+
+      testsManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithTestsPromise
+      );
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      testsManager.onEvent(callback);
+
+      await testsManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      // Wait for the poll cycle to execute and check the promise
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // loop_done should be called since tests passed
+      expect(callback).toHaveBeenCalledWith('loop_done', expect.any(Object));
+
+      // Check the iteration exit type is promise_met
+      const state = callback.mock.calls.find(
+        (call) => call[0] === 'loop_done'
+      )?.[1] as RalphLoopState;
+      expect(state?.iterations[0].exitType).toBe('promise_met');
+    }, 10000);
+
+    it('should return false when test command fails (non-zero exit code)', async () => {
+      // Use node -e to execute a simple exit(1) command that fails
+      const configWithTestsPromise: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'tests_pass', value: 'node -e "process.exit(1)"' },
+          doneSignal: { type: 'exit_code', value: '0' }, // Use exit_code to avoid done signal interference
+          iterationDelayMs: 100,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+
+      testsManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithTestsPromise
+      );
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      testsManager.onEvent(callback);
+
+      await testsManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      // Wait for the poll cycle to execute
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // loop_done should NOT be called since tests failed
+      expect(callback).not.toHaveBeenCalledWith('loop_done', expect.any(Object));
+    }, 10000);
+
+    it('should execute command in session worktreePath', async () => {
+      // Create a script in the temp directory that creates a marker file
+      const markerFile = path.join(tempDir, 'command-executed.marker');
+      const testCommand = `node -e "require('fs').writeFileSync('command-executed.marker', 'executed')"`;
+
+      const configWithTestsPromise: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'tests_pass', value: testCommand },
+          doneSignal: { type: 'exit_code', value: '0' },
+          iterationDelayMs: 100,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+
+      testsManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithTestsPromise
+      );
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      await testsManager.startLoop('test-repo', '1');
+
+      // Wait for the poll cycle to execute
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // Verify the command was executed in the worktreePath by checking the marker file
+      expect(fsActual.existsSync(markerFile)).toBe(true);
+      expect(fsActual.readFileSync(markerFile, 'utf-8')).toBe('executed');
+    }, 10000);
+  });
+
+  describe('custom promise type integration', () => {
+    // Use real timers for exec-based tests since execAsync needs real time
+    let customManager: RalphLoopManager;
+
+    afterEach(async () => {
+      if (customManager) {
+        customManager.stopLoop('test-repo', '1');
+      }
+      manager.stopLoop('test-repo', '1');
+    });
+
+    it('should return true when custom command exits successfully', async () => {
+      // Use node -e to execute a simple exit(0) command
+      const configWithCustomPromise: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'custom', value: 'node -e "process.exit(0)"' },
+          doneSignal: { type: 'exit_code', value: '0' },
+          iterationDelayMs: 100,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+
+      customManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithCustomPromise
+      );
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      customManager.onEvent(callback);
+
+      await customManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      // Wait for the poll cycle to execute
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // loop_done should be called since custom command succeeded
+      expect(callback).toHaveBeenCalledWith('loop_done', expect.any(Object));
+
+      // Check the iteration exit type is promise_met
+      const state = callback.mock.calls.find(
+        (call) => call[0] === 'loop_done'
+      )?.[1] as RalphLoopState;
+      expect(state?.iterations[0].exitType).toBe('promise_met');
+    }, 10000);
+
+    it('should return false when custom command fails', async () => {
+      // Use node -e to execute a simple exit(1) command that fails
+      const configWithCustomPromise: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'custom', value: 'node -e "process.exit(1)"' },
+          doneSignal: { type: 'exit_code', value: '0' },
+          iterationDelayMs: 100,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+
+      customManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithCustomPromise
+      );
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      const callback = vi.fn();
+      customManager.onEvent(callback);
+
+      await customManager.startLoop('test-repo', '1');
+      callback.mockClear();
+
+      // Wait for the poll cycle to execute
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // loop_done should NOT be called since custom command failed
+      expect(callback).not.toHaveBeenCalledWith('loop_done', expect.any(Object));
+    }, 10000);
+
+    it('should execute custom command in session worktreePath', async () => {
+      // Create a script that creates a marker file to verify cwd
+      const markerFile = path.join(tempDir, 'custom-executed.marker');
+      const customCommand = `node -e "require('fs').writeFileSync('custom-executed.marker', 'custom-executed')"`;
+
+      const configWithCustomPromise: CentralConfig = {
+        ...mockCentralConfig,
+        ralph: createRalphConfig({
+          promise: { type: 'custom', value: customCommand },
+          doneSignal: { type: 'exit_code', value: '0' },
+          iterationDelayMs: 100,
+          gitOperations: {
+            commitAfterEach: false,
+            pushAfterEach: false,
+            createPrOnComplete: false,
+          },
+        }),
+      };
+
+      customManager = new RalphLoopManager(
+        mockMultiRepoService as MultiRepoService,
+        configWithCustomPromise
+      );
+
+      const mockSession = createMockSession({
+        status: 'working',
+        worktreePath: tempDir,
+      });
+      vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+
+      await customManager.startLoop('test-repo', '1');
+
+      // Wait for the poll cycle to execute
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      // Verify the command was executed in the worktreePath by checking the marker file
+      expect(fsActual.existsSync(markerFile)).toBe(true);
+      expect(fsActual.readFileSync(markerFile, 'utf-8')).toBe('custom-executed');
+    }, 10000);
   });
 });
