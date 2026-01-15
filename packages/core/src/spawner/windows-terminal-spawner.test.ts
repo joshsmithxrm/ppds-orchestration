@@ -100,7 +100,7 @@ describe('WindowsTerminalSpawner', () => {
 
     const createRequest = (): WorkerSpawnRequest => ({
       sessionId: '42',
-      issues: [createTestIssue(42)],
+      issue: createTestIssue(42),
       workingDirectory: worktreePath,
       promptFilePath: path.join(worktreePath, '.claude', 'session-prompt.md'),
       githubOwner: 'test-owner',
@@ -125,27 +125,6 @@ describe('WindowsTerminalSpawner', () => {
       expect(typeof result.spawnedAt).toBe('string');
 
       expect(() => new Date(result.spawnedAt)).not.toThrow();
-    });
-
-    it('should handle multi-issue spawn request', async () => {
-      if (process.platform !== 'win32') {
-        return;
-      }
-
-      const { WindowsTerminalSpawner } = await import('./windows-terminal-spawner.js');
-      const spawner = new WindowsTerminalSpawner();
-
-      const multiIssueRequest: WorkerSpawnRequest = {
-        sessionId: '42',
-        issues: [createTestIssue(42), createTestIssue(43), createTestIssue(44)],
-        workingDirectory: worktreePath,
-        promptFilePath: path.join(worktreePath, '.claude', 'session-prompt.md'),
-        githubOwner: 'test-owner',
-        githubRepo: 'test-repo',
-      };
-
-      const result = await spawner.spawn(multiIssueRequest);
-      expect(result).toHaveProperty('success');
     });
 
     it('should return error when terminal is unavailable', async () => {

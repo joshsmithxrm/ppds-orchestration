@@ -7,8 +7,6 @@ export {
   WorktreeStatus,
   ExecutionMode,
   IssueRef,
-  getPrimaryIssue,
-  getIssueNumbers,
   STALE_THRESHOLD_MS,
 } from './session/types.js';
 
@@ -52,6 +50,10 @@ export {
   RalphConfig,
   DashboardConfig,
   DoneSignalConfig,
+  PromiseConfig,
+  GitOperationsConfig,
+  SpawnerConfig,
+  ReviewConfig,
 } from './config/central-config.js';
 
 // Config loader utilities
@@ -77,7 +79,7 @@ export type { SessionServiceConfig, SpawnOptions } from './session/session-servi
 export { GitUtils } from './git/git-utils.js';
 
 // Worker spawner
-export type { WorkerSpawner, SpawnResult, SpawnInfo } from './spawner/worker-spawner.js';
+export type { WorkerSpawner, SpawnResult, SpawnInfo, WorkerStatus } from './spawner/worker-spawner.js';
 export { WindowsTerminalSpawner, createSpawner } from './spawner/windows-terminal-spawner.js';
 
 // Session watcher
@@ -91,3 +93,53 @@ export type { HookContext, HookResult } from './hooks/hook-executor.js';
 // Process tracker
 export { ProcessTracker } from './process/process-tracker.js';
 export type { TrackedProcess, ProcessExitCallback } from './process/process-tracker.js';
+
+// Plan parser utilities
+export {
+  parsePlanFile,
+  getCurrentTask,
+  isPromiseMet,
+} from './utils/plan-parser.js';
+export type { Task, PlanSummary, ParsedPlan } from './utils/plan-parser.js';
+
+// Checkbox sync utilities
+export { syncCheckboxesToIssue } from './utils/checkbox-sync.js';
+export type { CheckboxSyncResult } from './utils/checkbox-sync.js';
+
+// Progress tracker utilities
+export {
+  appendProgress,
+  readProgress,
+  getLatestProgress,
+  calculateCompletionPercentage,
+  formatProgressEntry,
+  getProgressFilePath,
+} from './utils/progress-tracker.js';
+export type { ProgressEntry, ProgressFile } from './utils/progress-tracker.js';
+
+// Docker spawner
+export { DockerSpawner } from './spawner/docker-spawner.js';
+export type { DockerSpawnerConfig } from './spawner/docker-spawner.js';
+
+// Review agent
+export { invokeReviewAgent } from './review/review-agent.js';
+export type { ReviewAgentOptions } from './review/review-agent.js';
+export type {
+  ReviewVerdict,
+  ReviewVerdictStatus,
+  ReviewIssue,
+  ReviewCategory,
+  ReviewResult,
+} from './review/types.js';
+
+// PR creator
+export { createPullRequest, generatePRBody } from './git/pr-creator.js';
+export type { CreatePROptions, CreatePRResult } from './git/pr-creator.js';
+
+// GitHub notifications
+export {
+  notifyPRReady,
+  notifyImplementationStuck,
+  notifyReviewStuck,
+} from './notification/github-notifier.js';
+export type { NotificationOptions, NotificationResult } from './notification/github-notifier.js';

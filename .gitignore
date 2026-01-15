@@ -30,6 +30,9 @@ Thumbs.db
 # Test coverage
 coverage/
 
+# Test results
+test-results/
+
 # Logs
 *.log
 npm-debug.log*

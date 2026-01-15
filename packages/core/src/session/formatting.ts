@@ -50,27 +50,19 @@ export const ACTIVE_STATUSES_FOR_STALE: SessionStatus[] = [
 ];
 
 /**
- * Formats the issue numbers from a session for display.
- * Single issue: "#5"
- * Multiple issues: "#5, #6, #7"
+ * Formats the issue number from a session for display.
+ * Returns "#5" format.
  */
 export function formatIssues(session: SessionState): string {
-  if (session.issues.length === 1) {
-    return `#${session.issues[0].number}`;
-  }
-  return session.issues.map(i => `#${i.number}`).join(', ');
+  return `#${session.issue.number}`;
 }
 
 /**
  * Formats the session title for display.
- * Single issue: returns the issue title
- * Multiple issues: returns "N issues"
+ * Returns the issue title.
  */
 export function formatSessionTitle(session: SessionState): string {
-  if (session.issues.length === 1) {
-    return session.issues[0].title;
-  }
-  return `${session.issues.length} issues`;
+  return session.issue.title;
 }
 
 /**

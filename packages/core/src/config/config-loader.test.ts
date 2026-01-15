@@ -228,7 +228,7 @@ describe('config-loader', () => {
       };
 
       const effective = getRepoEffectiveConfig(configWithoutRalph, 'test-repo');
-      expect(effective.ralph.defaultIterations).toBe(10);
+      expect(effective.ralph.maxIterations).toBe(10);
       expect(effective.ralph.iterationDelayMs).toBe(5000);
     });
   });
@@ -281,7 +281,7 @@ describe('config-loader', () => {
     it('includes ralph defaults', () => {
       const config = createDefaultConfig();
 
-      expect(config.ralph?.defaultIterations).toBe(10);
+      expect(config.ralph?.maxIterations).toBe(10);
       expect(config.ralph?.iterationDelayMs).toBe(5000);
       expect(config.ralph?.doneSignal).toEqual({
         type: 'file',

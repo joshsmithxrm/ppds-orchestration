@@ -10,7 +10,6 @@ import {
   WorktreeStatus,
   ExecutionMode,
   IssueRef,
-  getIssueNumbers,
   STALE_THRESHOLD_MS,
   DeleteResult,
   WorktreeRemovalResult,
@@ -80,45 +79,29 @@ export class SessionService {
   }
 
   /**
-   * Spawns a new worker session for one or more issues.
-   * @param issueNumbers - Single issue number or array of issue numbers
+   * Spawns a new worker session for an issue.
+   * @param issueNumber - The issue number to work on
    * @param options - Spawn options
    */
-  async spawn(issueNumbers: number | number[], options?: SpawnOptions): Promise<SessionState> {
-    // Normalize to array
-    const issueNums = Array.isArray(issueNumbers) ? issueNumbers : [issueNumbers];
-
-    if (issueNums.length === 0) {
-      throw new Error('At least one issue number is required');
-    }
-
-    const primaryIssue = issueNums[0];
-    const sessionId = primaryIssue.toString();
+  async spawn(issueNumber: number, options?: SpawnOptions): Promise<SessionState> {
+    const sessionId = issueNumber.toString();
     const mode = options?.mode ?? 'single';
 
-    // Check for overlap with existing combined sessions
-    // (e.g., if session [2,4,5] exists and we try to spawn [1,2,3], issue #2 conflicts)
+    // Check for existing active session with this issue
     const allSessions = await this.store.listAll();
     for (const existing of allSessions) {
       if (existing.status === 'complete' || existing.status === 'cancelled') continue;
-      const existingIssues = getIssueNumbers(existing);
-      const overlap = issueNums.filter(n => existingIssues.includes(n));
-      if (overlap.length > 0) {
-        throw new Error(
-          `Issue(s) ${overlap.map(n => `#${n}`).join(', ')} already in active session '${existing.id}'`
-        );
+      if (existing.issue.number === issueNumber) {
+        throw new Error(`Issue #${issueNumber} already in active session '${existing.id}'`);
       }
     }
 
-    // Clean up any completed/cancelled sessions with matching IDs
-    for (const issueNum of issueNums) {
-      const existingId = issueNum.toString();
-      if (this.store.exists(existingId)) {
-        const existing = await this.store.load(existingId);
-        if (existing && (existing.status === 'complete' || existing.status === 'cancelled')) {
-          // Session is complete/cancelled - allow re-spawn by deleting old session
-          await this.store.delete(existingId);
-        }
+    // Clean up any completed/cancelled session with matching ID
+    if (this.store.exists(sessionId)) {
+      const existing = await this.store.load(sessionId);
+      if (existing && (existing.status === 'complete' || existing.status === 'cancelled')) {
+        // Session is complete/cancelled - allow re-spawn by deleting old session
+        await this.store.delete(sessionId);
       }
     }
 
@@ -127,27 +110,14 @@ export class SessionService {
       throw new Error(`Worker spawner (${this.spawner.getName()}) is not available`);
     }
 
-    // Fetch all issues from GitHub in parallel
-    const issueInfos = await Promise.all(
-      issueNums.map(async (num) => {
-        const info = await this.fetchIssue(num);
-        return { number: num, title: info.title, body: info.body };
-      })
-    );
+    // Fetch issue from GitHub
+    const issueData = await this.fetchIssue(issueNumber);
+    const issueInfo: IssueRef = { number: issueNumber, title: issueData.title, body: issueData.body };
 
-    // Generate branch and worktree names based on issue count
+    // Generate branch and worktree names
     const worktreePrefix = this.config.worktreePrefix ?? `${path.basename(this.config.repoRoot)}-`;
-    let branchName: string;
-    let worktreeName: string;
-
-    if (issueNums.length === 1) {
-      branchName = `issue-${primaryIssue}`;
-      worktreeName = `${worktreePrefix}issue-${primaryIssue}`;
-    } else {
-      const issuesSuffix = issueNums.join('-');
-      branchName = `issues-${issuesSuffix}`;
-      worktreeName = `${worktreePrefix}issues-${issuesSuffix}`;
-    }
+    const branchName = `issue-${issueNumber}`;
+    const worktreeName = `${worktreePrefix}issue-${issueNumber}`;
 
     const worktreePath = path.join(path.dirname(this.config.repoRoot), worktreeName);
 
@@ -171,7 +141,7 @@ export class SessionService {
     // Write worker prompt
     const promptPath = await this.writeWorkerPrompt(
       worktreePath,
-      issueInfos,
+      issueInfo,
       branchName,
       mode,
       options?.additionalPromptSections
@@ -182,7 +152,7 @@ export class SessionService {
     const sessionFilePath = this.store.getSessionFilePath(sessionId);
     const context: SessionContext = {
       sessionId,
-      issues: issueInfos,
+      issue: issueInfo,
       github: {
         owner: this.config.githubOwner,
         repo: this.config.githubRepo,
@@ -190,8 +160,8 @@ export class SessionService {
       branch: branchName,
       worktreePath,
       commands: {
-        update: `orch update --id ${primaryIssue}`,
-        heartbeat: `orch heartbeat --id ${primaryIssue}`,
+        update: `orch update --id ${issueNumber}`,
+        heartbeat: `orch heartbeat --id ${issueNumber}`,
       },
       spawnedAt: now,
       sessionFilePath,
@@ -201,7 +171,7 @@ export class SessionService {
     // Register session
     const session: SessionState = {
       id: sessionId,
-      issues: issueInfos,
+      issue: issueInfo,
       status: 'registered',
       mode,
       branch: branchName,
@@ -215,7 +185,7 @@ export class SessionService {
     // Spawn worker
     const spawnResult = await this.spawner.spawn({
       sessionId,
-      issues: issueInfos,
+      issue: issueInfo,
       workingDirectory: worktreePath,
       promptFilePath: promptPath,
       githubOwner: this.config.githubOwner,
@@ -274,7 +244,7 @@ export class SessionService {
     // Spawn a fresh worker in the existing worktree
     const spawnResult = await this.spawner.spawn({
       sessionId,
-      issues: session.issues,
+      issue: session.issue,
       workingDirectory: session.worktreePath,
       promptFilePath: promptPath,
       githubOwner: this.config.githubOwner,
@@ -346,7 +316,7 @@ export class SessionService {
       } else {
         // Worktree was removed externally, clean up session
         await this.store.delete(session.id);
-        cleanedIssueNumbers.push(...getIssueNumbers(session));
+        cleanedIssueNumbers.push(session.issue.number);
       }
     }
 
@@ -784,7 +754,7 @@ export class SessionService {
    */
   private async writeWorkerPrompt(
     worktreePath: string,
-    issues: IssueRef[],
+    issue: IssueRef,
     branchName: string,
     mode: ExecutionMode = 'single',
     additionalPromptSections?: string[]
@@ -801,7 +771,7 @@ export class SessionService {
     const prompt = this.promptBuilder.build({
       githubOwner: this.config.githubOwner,
       githubRepo: this.config.githubRepo,
-      issues,
+      issue,
       branchName,
       mode,
       additionalSections: additionalPromptSections,

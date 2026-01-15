@@ -23,7 +23,7 @@ describe('HookExecutor', () => {
 
   const mockSession: SessionState = {
     id: '123',
-    issues: [mockIssue],
+    issue: mockIssue,
     status: 'working',
     mode: 'single',
     branch: 'issue-123',

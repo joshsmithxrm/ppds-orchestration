@@ -10,8 +10,8 @@ export interface PromptContext {
   /** GitHub repo name (e.g., 'power-platform-developer-suite'). */
   githubRepo: string;
 
-  /** Issues to work on. First issue is the primary. */
-  issues: IssueRef[];
+  /** Issue to work on. */
+  issue: IssueRef;
 
   /** Git branch name for this session. */
   branchName: string;
@@ -37,33 +37,13 @@ export class WorkerPromptBuilder {
     const {
       githubOwner,
       githubRepo,
-      issues,
+      issue,
       branchName,
       additionalSections,
     } = context;
 
-    const primaryIssue = issues[0];
-    const issueNumbers = issues.map(i => i.number);
-    const isMultiIssue = issues.length > 1;
-
-    // Build the header based on single vs multi-issue
-    let prompt: string;
-    if (isMultiIssue) {
-      prompt = this.buildMultiIssueHeader(
-        issues,
-        issueNumbers,
-        branchName,
-        githubOwner,
-        githubRepo
-      );
-    } else {
-      prompt = this.buildSingleIssueHeader(
-        primaryIssue,
-        branchName,
-        githubOwner,
-        githubRepo
-      );
-    }
+    // Build the header
+    let prompt = this.buildIssueHeader(issue, branchName, githubOwner, githubRepo);
 
     // Add common sections
     prompt += this.buildCommonSections();
@@ -79,9 +59,9 @@ export class WorkerPromptBuilder {
   }
 
   /**
-   * Builds the header section for a single-issue session.
+   * Builds the header section for an issue session.
    */
-  private buildSingleIssueHeader(
+  private buildIssueHeader(
     issue: IssueRef,
     branchName: string,
     githubOwner: string,
@@ -107,58 +87,6 @@ gh pr create --repo ${githubOwner}/${githubRepo} ...
 **${issue.title}**
 
 ${issue.body || '_No description provided._'}
-`;
-  }
-
-  /**
-   * Builds the header section for a multi-issue session.
-   */
-  private buildMultiIssueHeader(
-    issues: IssueRef[],
-    issueNumbers: number[],
-    branchName: string,
-    githubOwner: string,
-    githubRepo: string
-  ): string {
-    const primaryIssue = issues[0];
-
-    return `# Session: Issues ${issueNumbers.map(n => `#${n}`).join(', ')}
-
-## Repository Context
-
-**IMPORTANT:** For all GitHub operations (CLI and MCP tools), use these values:
-- Owner: \`${githubOwner}\`
-- Repo: \`${githubRepo}\`
-- Issues: ${issueNumbers.map(n => `\`#${n}\``).join(', ')}
-- Branch: \`${branchName}\`
-
-Examples:
-\`\`\`bash
-gh issue view ${primaryIssue.number} --repo ${githubOwner}/${githubRepo}
-gh pr create --repo ${githubOwner}/${githubRepo} ...
-\`\`\`
-
-## Issues
-
-${issues.map(issue => `### Issue #${issue.number}: ${issue.title}
-
-${issue.body || '_No description provided._'}
-`).join('\n')}
-
-## Combined Implementation
-
-You are implementing **${issues.length} related issues** in a single PR.
-
-**Approach:**
-1. Plan how these issues relate to each other
-2. Identify shared components or dependencies
-3. Implement in a logical order
-4. Create ONE PR that addresses all issues
-
-**PR Requirements:**
-- Title should reference the primary issue or summarize all
-- Body should have sections for each issue addressed
-- Use \`Closes ${issueNumbers.map(n => `#${n}`).join(', Closes ')}\` to auto-close all issues
 `;
   }
 

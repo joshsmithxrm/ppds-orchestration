@@ -151,7 +151,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
               className="w-full bg-ppds-bg border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-ppds-accent"
             />
             <p className="text-xs text-gray-500 mt-1">
-              Enter one or more issue numbers, separated by commas or spaces
+              Enter issue numbers (multiple will spawn as separate sessions)
             </p>
           </div>
 

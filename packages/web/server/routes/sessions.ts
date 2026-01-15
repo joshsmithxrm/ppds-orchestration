@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { MultiRepoService } from '../services/multi-repo-service.js';
 import { RalphLoopManager } from '../services/ralph-loop-manager.js';
-import { SessionStatus, ExecutionMode } from '@ppds-orchestration/core';
+import { SessionStatus, ExecutionMode, SessionState } from '@ppds-orchestration/core';
 
 export const sessionsRouter = Router();
 
@@ -52,9 +52,9 @@ sessionsRouter.get('/:repoId/:sessionId', async (req: Request, res: Response) =>
 
 /**
  * POST /api/sessions/:repoId
- * Spawn a new worker session.
+ * Spawn new worker session(s).
  * Body: { issueNumber?: number, issueNumbers?: number[], mode?: 'single' | 'ralph', iterations?: number }
- * - issueNumbers: Array of issue numbers for combined session (preferred)
+ * - issueNumbers: Array of issue numbers (each spawns as separate session)
  * - issueNumber: Single issue number (backwards compatibility)
  */
 sessionsRouter.post('/:repoId', async (req: Request, res: Response) => {
@@ -78,19 +78,22 @@ sessionsRouter.post('/:repoId', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'issueNumber or issueNumbers is required' });
     }
 
-    const session = await service.spawn(
-      repoId,
-      issues,
-      mode as ExecutionMode
-    );
+    // Spawn each issue as a separate session
+    const sessions: SessionState[] = [];
+    for (const issue of issues) {
+      const session = await service.spawn(repoId, issue, mode as ExecutionMode);
+      sessions.push(session);
 
-    // Start Ralph loop if mode is 'ralph'
-    if (mode === 'ralph') {
-      const options = iterations ? { iterations } : undefined;
-      await ralphManager.startLoop(repoId, session.id, options);
+      // Start Ralph loop if mode is 'ralph'
+      if (mode === 'ralph') {
+        const options = iterations ? { iterations } : undefined;
+        await ralphManager.startLoop(repoId, session.id, options);
+      }
     }
 
-    res.status(201).json({ session, repoId });
+    // Return the last session for backwards compatibility, but also include all sessions
+    const session = sessions[sessions.length - 1];
+    res.status(201).json({ session, sessions, repoId });
   } catch (error) {
     console.error('Error spawning session:', error);
     res.status(500).json({

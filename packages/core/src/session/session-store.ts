@@ -103,8 +103,8 @@ export class SessionStore {
       }
     }
 
-    // Sort by primary issue number
-    return sessions.sort((a, b) => a.issues[0].number - b.issues[0].number);
+    // Sort by issue number
+    return sessions.sort((a, b) => a.issue.number - b.issue.number);
   }
 
   /**
@@ -132,8 +132,8 @@ export class SessionStore {
       }
     }
 
-    // Sort by primary issue number
-    return sessions.sort((a, b) => a.issues[0].number - b.issues[0].number);
+    // Sort by issue number
+    return sessions.sort((a, b) => a.issue.number - b.issue.number);
   }
 
   /**

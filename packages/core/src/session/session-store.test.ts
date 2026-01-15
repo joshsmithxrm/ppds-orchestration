@@ -26,12 +26,12 @@ describe('SessionStore', () => {
     body: `Description for issue #${number}`,
   });
 
-  const createTestSession = (id: string, issueNumbers: number[]): SessionState => ({
+  const createTestSession = (id: string, issueNumber: number): SessionState => ({
     id,
-    issues: issueNumbers.map(createTestIssue),
+    issue: createTestIssue(issueNumber),
     status: 'working',
     mode: 'single',
-    branch: issueNumbers.length === 1 ? `issue-${issueNumbers[0]}` : `issues-${issueNumbers.join('-')}`,
+    branch: `issue-${issueNumber}`,
     worktreePath: `/tmp/test-worktree-${id}`,
     startedAt: new Date().toISOString(),
     lastHeartbeat: new Date().toISOString(),
@@ -39,7 +39,7 @@ describe('SessionStore', () => {
 
   describe('save and load', () => {
     it('should save and load a session', async () => {
-      const session = createTestSession('123', [123]);
+      const session = createTestSession('123', 123);
 
       await store.save(session);
       const loaded = await store.load('123');
@@ -53,7 +53,7 @@ describe('SessionStore', () => {
     });
 
     it('should overwrite existing session', async () => {
-      const session1 = createTestSession('123', [123]);
+      const session1 = createTestSession('123', 123);
       const session2 = { ...session1, status: 'stuck' as const, stuckReason: 'Test reason' };
 
       await store.save(session1);
@@ -64,17 +64,15 @@ describe('SessionStore', () => {
       expect(loaded?.stuckReason).toBe('Test reason');
     });
 
-    it('should save and load multi-issue session', async () => {
-      const session = createTestSession('123', [123, 456, 789]);
+    it('should save and load session with issue data', async () => {
+      const session = createTestSession('123', 123);
 
       await store.save(session);
       const loaded = await store.load('123');
 
       expect(loaded).toEqual(session);
-      expect(loaded?.issues).toHaveLength(3);
-      expect(loaded?.issues[0].number).toBe(123);
-      expect(loaded?.issues[1].number).toBe(456);
-      expect(loaded?.issues[2].number).toBe(789);
+      expect(loaded?.issue.number).toBe(123);
+      expect(loaded?.issue.title).toBe('Test issue #123');
     });
   });
 
@@ -85,21 +83,21 @@ describe('SessionStore', () => {
     });
 
     it('should return active sessions sorted by primary issue number', async () => {
-      await store.save(createTestSession('456', [456]));
-      await store.save(createTestSession('123', [123]));
-      await store.save(createTestSession('789', [789]));
+      await store.save(createTestSession('456', 456));
+      await store.save(createTestSession('123', 123));
+      await store.save(createTestSession('789', 789));
 
       const sessions = await store.listActive();
 
       expect(sessions).toHaveLength(3);
-      expect(sessions[0].issues[0].number).toBe(123);
-      expect(sessions[1].issues[0].number).toBe(456);
-      expect(sessions[2].issues[0].number).toBe(789);
+      expect(sessions[0].issue.number).toBe(123);
+      expect(sessions[1].issue.number).toBe(456);
+      expect(sessions[2].issue.number).toBe(789);
     });
 
     it('should exclude completed sessions', async () => {
-      const active = createTestSession('123', [123]);
-      const completed = { ...createTestSession('456', [456]), status: 'complete' as const };
+      const active = createTestSession('123', 123);
+      const completed = { ...createTestSession('456', 456), status: 'complete' as const };
 
       await store.save(active);
       await store.save(completed);
@@ -107,12 +105,12 @@ describe('SessionStore', () => {
       const sessions = await store.listActive();
 
       expect(sessions).toHaveLength(1);
-      expect(sessions[0].issues[0].number).toBe(123);
+      expect(sessions[0].issue.number).toBe(123);
     });
 
     it('should exclude cancelled sessions', async () => {
-      const active = createTestSession('123', [123]);
-      const cancelled = { ...createTestSession('456', [456]), status: 'cancelled' as const };
+      const active = createTestSession('123', 123);
+      const cancelled = { ...createTestSession('456', 456), status: 'cancelled' as const };
 
       await store.save(active);
       await store.save(cancelled);
@@ -120,15 +118,15 @@ describe('SessionStore', () => {
       const sessions = await store.listActive();
 
       expect(sessions).toHaveLength(1);
-      expect(sessions[0].issues[0].number).toBe(123);
+      expect(sessions[0].issue.number).toBe(123);
     });
   });
 
   describe('listAll', () => {
     it('should include completed and cancelled sessions', async () => {
-      await store.save(createTestSession('123', [123]));
-      await store.save({ ...createTestSession('456', [456]), status: 'complete' as const });
-      await store.save({ ...createTestSession('789', [789]), status: 'cancelled' as const });
+      await store.save(createTestSession('123', 123));
+      await store.save({ ...createTestSession('456', 456), status: 'complete' as const });
+      await store.save({ ...createTestSession('789', 789), status: 'cancelled' as const });
 
       const sessions = await store.listAll();
 
@@ -138,7 +136,7 @@ describe('SessionStore', () => {
 
   describe('delete', () => {
     it('should delete a session', async () => {
-      const session = createTestSession('123', [123]);
+      const session = createTestSession('123', 123);
 
       await store.save(session);
       await store.delete('123');
@@ -154,7 +152,7 @@ describe('SessionStore', () => {
 
   describe('exists', () => {
     it('should return true for existing session', async () => {
-      await store.save(createTestSession('123', [123]));
+      await store.save(createTestSession('123', 123));
       expect(store.exists('123')).toBe(true);
     });
 
@@ -174,7 +172,7 @@ describe('SessionStore', () => {
     it('should write and read session context', async () => {
       const context: SessionContext = {
         sessionId: '123',
-        issues: [createTestIssue(123)],
+        issue: createTestIssue(123),
         github: { owner: 'test-owner', repo: 'test-repo' },
         branch: 'issue-123',
         worktreePath,
@@ -190,28 +188,7 @@ describe('SessionStore', () => {
       const loaded = await store.readSessionContext(worktreePath);
 
       expect(loaded).toEqual(context);
-    });
-
-    it('should write and read multi-issue session context', async () => {
-      const context: SessionContext = {
-        sessionId: '123',
-        issues: [createTestIssue(123), createTestIssue(456)],
-        github: { owner: 'test-owner', repo: 'test-repo' },
-        branch: 'issues-123-456',
-        worktreePath,
-        commands: {
-          update: 'orch update --id 123',
-          heartbeat: 'orch heartbeat --id 123',
-        },
-        spawnedAt: new Date().toISOString(),
-        sessionFilePath: path.join(worktreePath, '..', 'sessions', '123.json'),
-      };
-
-      await store.writeSessionContext(worktreePath, context);
-      const loaded = await store.readSessionContext(worktreePath);
-
-      expect(loaded).toEqual(context);
-      expect(loaded?.issues).toHaveLength(2);
+      expect(loaded?.issue.number).toBe(123);
     });
 
     it('should write and read session state', async () => {

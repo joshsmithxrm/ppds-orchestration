@@ -10,6 +10,8 @@ const mockSpawner = {
   isAvailable: () => true,
   spawn: vi.fn().mockResolvedValue({ success: true, spawnId: 'mock-spawn-id', spawnedAt: new Date().toISOString() }),
   getName: () => 'Mock Spawner',
+  stop: vi.fn().mockResolvedValue(undefined),
+  getStatus: vi.fn().mockResolvedValue({ running: false }),
 };
 
 describe('SessionService', () => {
@@ -52,12 +54,12 @@ describe('SessionService', () => {
     body: `Description for issue #${number}`,
   });
 
-  const createTestSession = (id: string, issueNumbers: number[], worktreePath: string): SessionState => ({
+  const createTestSession = (id: string, issueNumber: number, worktreePath: string): SessionState => ({
     id,
-    issues: issueNumbers.map(createTestIssue),
+    issue: createTestIssue(issueNumber),
     status: 'working',
     mode: 'single',
-    branch: issueNumbers.length === 1 ? `issue-${issueNumbers[0]}` : `issues-${issueNumbers.join('-')}`,
+    branch: `issue-${issueNumber}`,
     worktreePath,
     startedAt: new Date().toISOString(),
     lastHeartbeat: new Date().toISOString(),
@@ -79,7 +81,7 @@ describe('SessionService', () => {
       const worktreePath = path.join(tempDir, 'test-worktree');
       fs.mkdirSync(worktreePath, { recursive: true });
 
-      const session = createTestSession('123', [123], worktreePath);
+      const session = createTestSession('123', 123, worktreePath);
 
       fs.writeFileSync(
         path.join(sessionsDir, 'work-123.json'),
@@ -109,7 +111,7 @@ describe('SessionService', () => {
       fs.mkdirSync(worktreePath, { recursive: true });
 
       const session: SessionState = {
-        ...createTestSession('123', [123], worktreePath),
+        ...createTestSession('123', 123, worktreePath),
         status: 'stuck',
         stuckReason: 'Need guidance',
       };
@@ -141,7 +143,7 @@ describe('SessionService', () => {
       worktreePath = path.join(tempDir, 'test-worktree');
       fs.mkdirSync(worktreePath, { recursive: true });
 
-      const session = createTestSession('123', [123], worktreePath);
+      const session = createTestSession('123', 123, worktreePath);
 
       fs.writeFileSync(
         path.join(sessionsDir, 'work-123.json'),
@@ -190,7 +192,7 @@ describe('SessionService', () => {
       const worktreePath = path.join(tempDir, 'test-worktree');
       fs.mkdirSync(worktreePath, { recursive: true });
 
-      const session = createTestSession('123', [123], worktreePath);
+      const session = createTestSession('123', 123, worktreePath);
 
       fs.writeFileSync(
         path.join(sessionsDir, 'work-123.json'),
@@ -211,7 +213,7 @@ describe('SessionService', () => {
       fs.mkdirSync(worktreePath, { recursive: true });
       fs.writeFileSync(path.join(worktreePath, 'test-file.txt'), 'test');
 
-      const session = createTestSession('123', [123], worktreePath);
+      const session = createTestSession('123', 123, worktreePath);
 
       fs.writeFileSync(
         path.join(sessionsDir, 'work-123.json'),
@@ -239,7 +241,7 @@ describe('SessionService', () => {
       fs.mkdirSync(worktreePath, { recursive: true });
 
       const session: SessionState = {
-        ...createTestSession('123', [123], worktreePath),
+        ...createTestSession('123', 123, worktreePath),
         status: 'complete',
       };
 
@@ -279,7 +281,7 @@ describe('SessionService', () => {
 
     it('should throw if session is not stuck', async () => {
       const session: SessionState = {
-        ...createTestSession('123', [123], worktreePath),
+        ...createTestSession('123', 123, worktreePath),
         status: 'working',
       };
       fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
@@ -292,7 +294,7 @@ describe('SessionService', () => {
     it('should throw if worktree does not exist', async () => {
       const nonExistentWorktree = path.join(tempDir, 'non-existent-worktree');
       const session: SessionState = {
-        ...createTestSession('123', [123], nonExistentWorktree),
+        ...createTestSession('123', 123, nonExistentWorktree),
         status: 'stuck',
         stuckReason: 'Test stuck reason',
       };
@@ -308,7 +310,7 @@ describe('SessionService', () => {
       fs.unlinkSync(path.join(worktreePath, '.claude', 'session-prompt.md'));
 
       const session: SessionState = {
-        ...createTestSession('123', [123], worktreePath),
+        ...createTestSession('123', 123, worktreePath),
         status: 'stuck',
         stuckReason: 'Test stuck reason',
       };
@@ -321,7 +323,7 @@ describe('SessionService', () => {
 
     it('should restart stuck session and update status to working', async () => {
       const session: SessionState = {
-        ...createTestSession('123', [123], worktreePath),
+        ...createTestSession('123', 123, worktreePath),
         status: 'stuck',
         stuckReason: 'Need guidance',
       };
@@ -349,14 +351,14 @@ describe('SessionService', () => {
 
       // Create an existing session with issue 2
       const existingSession: SessionState = {
-        ...createTestSession('2', [2, 4, 5], worktreePath),
+        ...createTestSession('2', 2, worktreePath),
         status: 'working',
       };
       fs.writeFileSync(path.join(sessionsDir, 'work-2.json'), JSON.stringify(existingSession));
 
-      // Try to spawn a session that includes issue 2
-      await expect(service.spawn([1, 2, 3])).rejects.toThrow(
-        "Issue(s) #2 already in active session '2'"
+      // Try to spawn a session for issue 2
+      await expect(service.spawn(2)).rejects.toThrow(
+        "Issue #2 already in active session '2'"
       );
     });
 
@@ -366,31 +368,14 @@ describe('SessionService', () => {
 
       // Create a completed session with issue 2
       const existingSession: SessionState = {
-        ...createTestSession('2', [2], worktreePath),
+        ...createTestSession('2', 2, worktreePath),
         status: 'complete',
       };
       fs.writeFileSync(path.join(sessionsDir, 'work-2.json'), JSON.stringify(existingSession));
 
       // This should not throw (completed sessions don't block)
       // Note: This will fail at GitHub fetch step, but we're testing the overlap detection
-      await expect(service.spawn([2])).rejects.toThrow(/Failed to fetch issue/);
-    });
-
-    it('should detect multiple overlapping issues', async () => {
-      const worktreePath = path.join(tempDir, 'existing-worktree');
-      fs.mkdirSync(worktreePath, { recursive: true });
-
-      // Create an existing session with issues 2, 4, 5
-      const existingSession: SessionState = {
-        ...createTestSession('2', [2, 4, 5], worktreePath),
-        status: 'working',
-      };
-      fs.writeFileSync(path.join(sessionsDir, 'work-2.json'), JSON.stringify(existingSession));
-
-      // Try to spawn a session that includes issues 2 and 4
-      await expect(service.spawn([1, 2, 4])).rejects.toThrow(
-        "Issue(s) #2, #4 already in active session '2'"
-      );
+      await expect(service.spawn(2)).rejects.toThrow(/Failed to fetch issue/);
     });
   });
 
@@ -401,7 +386,7 @@ describe('SessionService', () => {
 
       const oldDate = new Date(Date.now() - 60000).toISOString();
       const session: SessionState = {
-        ...createTestSession('123', [123], '/tmp/test'),
+        ...createTestSession('123', 123, '/tmp/test'),
         startedAt: oldDate,
         lastHeartbeat: oldDate,
       };
@@ -424,7 +409,7 @@ describe('SessionService', () => {
     it('should return true for session with old heartbeat', () => {
       const oldDate = new Date(Date.now() - 120000).toISOString(); // 2 minutes ago
       const session: SessionState = {
-        ...createTestSession('123', [123], '/tmp/test'),
+        ...createTestSession('123', 123, '/tmp/test'),
         startedAt: oldDate,
         lastHeartbeat: oldDate,
       };
@@ -433,7 +418,7 @@ describe('SessionService', () => {
     });
 
     it('should return false for session with recent heartbeat', () => {
-      const session = createTestSession('123', [123], '/tmp/test');
+      const session = createTestSession('123', 123, '/tmp/test');
 
       expect(service.isStale(session)).toBe(false);
     });

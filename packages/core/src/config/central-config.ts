@@ -90,15 +90,100 @@ export const DoneSignalConfig = z.object({
 export type DoneSignalConfig = z.infer<typeof DoneSignalConfig>;
 
 /**
+ * Promise configuration for Ralph loop completion.
+ * Defines the goal that signals successful task completion.
+ */
+export const PromiseConfig = z.object({
+  /**
+   * Type of promise to check:
+   * - 'plan_complete': All tasks in plan file are marked done
+   * - 'file': Specific file exists at path
+   * - 'tests_pass': Test command exits successfully
+   * - 'custom': Custom shell command returns success
+   */
+  type: z.enum(['plan_complete', 'file', 'tests_pass', 'custom']),
+  /**
+   * Value depends on type:
+   * - plan_complete: path to plan file (e.g., 'IMPLEMENTATION_PLAN.md')
+   * - file: path to file to check for
+   * - tests_pass: test command to run (e.g., 'npm test')
+   * - custom: shell command to execute
+   */
+  value: z.string(),
+});
+
+export type PromiseConfig = z.infer<typeof PromiseConfig>;
+
+/**
+ * Git operations configuration for Ralph loop.
+ * Controls automatic git operations after iterations.
+ */
+export const GitOperationsConfig = z.object({
+  /** Whether to commit changes after each iteration (default: true) */
+  commitAfterEach: z.boolean().default(true),
+  /** Whether to push changes after each iteration (default: true) */
+  pushAfterEach: z.boolean().default(true),
+  /** Whether to create a PR when Ralph loop completes (default: true) */
+  createPrOnComplete: z.boolean().default(true),
+});
+
+export type GitOperationsConfig = z.infer<typeof GitOperationsConfig>;
+
+/**
+ * Spawner configuration for worker process management.
+ */
+export const SpawnerConfig = z.object({
+  /** Spawner type: 'windows-terminal' for local dev, 'docker' for containerized */
+  type: z.enum(['windows-terminal', 'docker']).default('windows-terminal'),
+  /** Docker-specific settings (only used when type='docker') */
+  docker: z.object({
+    /** Docker image to use (default: 'ppds-worker:latest') */
+    image: z.string().default('ppds-worker:latest'),
+    /** Memory limit for container (default: '4g') */
+    memoryLimit: z.string().default('4g'),
+    /** CPU limit for container (default: '2') */
+    cpuLimit: z.string().default('2'),
+    /** Additional volume mounts (host:container) */
+    volumes: z.array(z.string()).default([]),
+    /** Additional environment variables */
+    env: z.record(z.string(), z.string()).default({}),
+  }).default({}),
+});
+
+export type SpawnerConfig = z.infer<typeof SpawnerConfig>;
+
+/**
+ * Code review configuration for the review phase.
+ */
+export const ReviewConfig = z.object({
+  /** Maximum number of review cycles before marking as stuck (default: 3) */
+  maxCycles: z.number().default(3),
+  /** Path to the code review agent prompt file (optional, uses example if not set) */
+  agentPromptPath: z.string().optional(),
+  /** Timeout for review agent in milliseconds (default: 300000 = 5 minutes) */
+  timeoutMs: z.number().default(300_000),
+});
+
+export type ReviewConfig = z.infer<typeof ReviewConfig>;
+
+/**
  * Ralph loop execution settings.
  */
 export const RalphConfig = z.object({
-  /** Default number of iterations when not specified at spawn time (default: 10) */
-  defaultIterations: z.number().default(10),
-  /** Optional early-exit signal (file-based by default - won't trigger unless file is created) */
+  /** Maximum number of iterations when not specified at spawn time (default: 10) */
+  maxIterations: z.number().default(10),
+  /** Promise configuration - defines the goal for task completion */
+  promise: PromiseConfig.default({ type: 'plan_complete', value: 'IMPLEMENTATION_PLAN.md' }),
+  /** Git operations configuration - controls automatic git actions */
+  gitOperations: GitOperationsConfig.default({}),
+  /** Optional early-exit signal (file-based by default) */
   doneSignal: DoneSignalConfig.default({ type: 'file', value: '.claude/.ralph-done' }),
   /** Delay between iterations in ms (default: 5000) */
   iterationDelayMs: z.number().default(5000),
+  /** Spawner configuration - controls how workers are spawned */
+  spawner: SpawnerConfig.default({}),
+  /** Code review configuration - controls the review phase */
+  reviewConfig: ReviewConfig.default({}),
 });
 
 export type RalphConfig = z.infer<typeof RalphConfig>;

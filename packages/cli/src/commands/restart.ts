@@ -8,7 +8,7 @@ export async function restartCommand(sessionId: string): Promise<void> {
   const session = await service.restart(sessionId);
 
   console.log(chalk.green(`\u2713 Session restarted`));
-  console.log(`  Issues: ${session.issues.map(i => chalk.cyan(`#${i.number}`)).join(', ')}`);
+  console.log(`  Issue: ${chalk.cyan(`#${session.issue.number}`)}`);
   console.log(`  Status: ${chalk.yellow(session.status)}`);
 
   if (session.forwardedMessage) {

@@ -2,8 +2,20 @@ import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { WorkerSpawner, SpawnResult, SpawnInfo } from './worker-spawner.js';
+import { WorkerSpawner, SpawnResult, SpawnInfo, WorkerStatus } from './worker-spawner.js';
 import { WorkerSpawnRequest } from '../session/types.js';
+
+/**
+ * Escapes a string for safe use in PowerShell commands.
+ * Handles backticks, dollar signs, and double quotes.
+ */
+function escapePowerShellString(str: string): string {
+  return str
+    .replace(/`/g, '``')      // Escape backticks first
+    .replace(/\$/g, '`$')     // Escape dollar signs
+    .replace(/"/g, '`"')      // Escape double quotes
+    .replace(/\\/g, '\\\\');  // Escape backslashes for -like pattern
+}
 
 /**
  * Windows Terminal worker spawner.
@@ -11,6 +23,11 @@ import { WorkerSpawnRequest } from '../session/types.js';
  */
 export class WindowsTerminalSpawner implements WorkerSpawner {
   private wtPath: string | null = null;
+  /**
+   * Track spawned workers by spawn ID -> worktree path.
+   * This allows stop() and getStatus() to find the right worker.
+   */
+  private spawnedWorkers = new Map<string, string>();
 
   getName(): string {
     return 'Windows Terminal';
@@ -72,18 +89,15 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
     }
 
     // Write spawn info to worktree for tracking
-    const issueNumbers = request.issues.map(i => i.number);
     const spawnInfo: SpawnInfo = {
       spawnId,
       spawnedAt,
-      issueNumbers,
+      issueNumbers: [request.issue.number],
     };
     await this.writeSpawnInfo(request.workingDirectory, spawnInfo);
 
-    // Tab title shows all issues
-    const tabTitle = issueNumbers.length === 1
-      ? `Issue #${issueNumbers[0]}`
-      : `Issues #${issueNumbers.join(', #')}`;
+    // Tab title shows the issue
+    const tabTitle = `Issue #${request.issue.number}`;
 
     // Build the Claude command
     const claudeCommand = this.buildClaudeCommand(request);
@@ -122,6 +136,8 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
 
       // Give it a moment to start
       setTimeout(() => {
+        // Track this spawn for stop() and getStatus()
+        this.spawnedWorkers.set(spawnId, request.workingDirectory);
         resolve({
           success: true,
           spawnId,
@@ -129,6 +145,89 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
         });
       }, 500);
     });
+  }
+
+  /**
+   * Stops a running worker by creating an exit signal file.
+   * The session watcher script will detect this and terminate the Claude process.
+   */
+  async stop(spawnId: string): Promise<void> {
+    const worktreePath = this.spawnedWorkers.get(spawnId);
+    if (!worktreePath) {
+      throw new Error(`Unknown spawn ID: ${spawnId}`);
+    }
+
+    // Create exit signal file that the watcher script monitors
+    const signalPath = path.join(worktreePath, '.claude', 'exit-signal');
+    await fs.promises.writeFile(signalPath, 'stop', 'utf-8');
+
+    // Also try to kill any claude processes for this worktree
+    // The watcher script should handle this, but we do it here as backup
+    try {
+      spawnSync('powershell', [
+        '-NoProfile',
+        '-Command',
+        `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'claude.exe' -and $_.CommandLine -like '*${escapePowerShellString(worktreePath)}*' } | ForEach-Object { taskkill /T /F /PID $_.ProcessId }`,
+      ], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+    } catch {
+      // Ignore errors - the watcher should handle cleanup
+    }
+  }
+
+  /**
+   * Gets the current status of a worker by checking the spawn info and session files.
+   */
+  async getStatus(spawnId: string): Promise<WorkerStatus> {
+    const worktreePath = this.spawnedWorkers.get(spawnId);
+    if (!worktreePath) {
+      // Unknown spawn - assume not running
+      return { running: false };
+    }
+
+    // Check if exit signal file exists (worker was told to stop)
+    const signalPath = path.join(worktreePath, '.claude', 'exit-signal');
+    if (fs.existsSync(signalPath)) {
+      return { running: false, exitCode: 0 };
+    }
+
+    // Check session file for terminal statuses
+    try {
+      const contextPath = path.join(worktreePath, '.claude', 'session-context.json');
+      if (fs.existsSync(contextPath)) {
+        const contextContent = await fs.promises.readFile(contextPath, 'utf-8');
+        const context = JSON.parse(contextContent);
+        if (context.sessionFilePath && fs.existsSync(context.sessionFilePath)) {
+          const sessionContent = await fs.promises.readFile(context.sessionFilePath, 'utf-8');
+          const session = JSON.parse(sessionContent);
+          const terminalStatuses = ['complete', 'cancelled', 'stuck'];
+          if (terminalStatuses.includes(session.status)) {
+            return { running: false, exitCode: session.status === 'complete' ? 0 : 1 };
+          }
+        }
+      }
+    } catch {
+      // Ignore errors reading session
+    }
+
+    // Check if Claude process is running for this worktree
+    try {
+      const result = spawnSync('powershell', [
+        '-NoProfile',
+        '-Command',
+        `(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'claude.exe' -and $_.CommandLine -like '*${worktreePath.replace(/\\/g, '\\\\')}*' }).Count`,
+      ], {
+        stdio: 'pipe',
+        windowsHide: true,
+      });
+      const count = parseInt(result.stdout?.toString().trim() || '0', 10);
+      return { running: count > 0 };
+    } catch {
+      // Can't determine - assume not running
+      return { running: false };
+    }
   }
 
   /**
@@ -283,12 +382,7 @@ pause >nul
   private buildClaudeCommand(request: WorkerSpawnRequest): string {
     // Bootstrap instruction tells Claude where to find full instructions
     // The full prompt is already written to .claude/session-prompt.md by writeWorkerPrompt()
-    const issueNumbers = request.issues.map(i => i.number);
-    const issueLabel = issueNumbers.length === 1
-      ? `Issue #${issueNumbers[0]}`
-      : `Issues #${issueNumbers.join(', #')}`;
-
-    const bootstrap = `You are an autonomous worker for ${issueLabel}. Read .claude/session-prompt.md for your full instructions and begin.`;
+    const bootstrap = `You are an autonomous worker for Issue #${request.issue.number}. Read .claude/session-prompt.md for your full instructions and begin.`;
 
     // Escape quotes for Windows cmd by doubling them
     const escaped = bootstrap.replace(/"/g, '""');
