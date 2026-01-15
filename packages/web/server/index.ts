@@ -18,7 +18,7 @@ import {
   centralConfigExists,
   createDefaultConfig,
   saveCentralConfig,
-  DEFAULT_CONFIG_PATH,
+  getConfigPath,
 } from '@ppds-orchestration/core';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -32,14 +32,15 @@ app.use(cors());
 app.use(express.json());
 
 // Load or create central config
+const configPath = getConfigPath();
 let centralConfig;
 if (centralConfigExists()) {
   centralConfig = loadCentralConfig();
-  console.log(`Loaded config from ${DEFAULT_CONFIG_PATH}`);
+  console.log(`Loaded config from ${configPath}`);
 } else {
   centralConfig = createDefaultConfig();
   saveCentralConfig(centralConfig);
-  console.log(`Created default config at ${DEFAULT_CONFIG_PATH}`);
+  console.log(`Created default config at ${configPath}`);
 }
 
 // Initialize multi-repo service

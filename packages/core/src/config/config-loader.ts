@@ -4,9 +4,22 @@ import * as os from 'os';
 import { CentralConfig, RepoConfig, HookConfig, HookConfigInput } from './central-config.js';
 
 /**
+ * Environment variable for custom config path.
+ * Set this to use a config file in a custom location (e.g., for version-controlled configs).
+ */
+export const CONFIG_PATH_ENV_VAR = 'ORCH_CONFIG_PATH';
+
+/**
  * Default location for central config file.
  */
 export const DEFAULT_CONFIG_PATH = path.join(os.homedir(), '.orchestration', 'config.json');
+
+/**
+ * Get the effective config path, checking env var first.
+ */
+export function getConfigPath(): string {
+  return process.env[CONFIG_PATH_ENV_VAR] || DEFAULT_CONFIG_PATH;
+}
 
 /**
  * Expands ~ to home directory in paths.
@@ -20,11 +33,11 @@ export function expandPath(inputPath: string): string {
 
 /**
  * Load and validate central config from disk.
- * @param configPath Path to config file (defaults to ~/.orchestration/config.json)
+ * @param configPath Path to config file (defaults to ORCH_CONFIG_PATH env var or ~/.orchestration/config.json)
  * @returns Validated central config
  * @throws If config file doesn't exist or is invalid
  */
-export function loadCentralConfig(configPath: string = DEFAULT_CONFIG_PATH): CentralConfig {
+export function loadCentralConfig(configPath: string = getConfigPath()): CentralConfig {
   const expandedPath = expandPath(configPath);
 
   if (!fs.existsSync(expandedPath)) {
@@ -46,9 +59,9 @@ export function loadCentralConfig(configPath: string = DEFAULT_CONFIG_PATH): Cen
 /**
  * Save central config to disk.
  * @param config Config to save
- * @param configPath Path to save to (defaults to ~/.orchestration/config.json)
+ * @param configPath Path to save to (defaults to ORCH_CONFIG_PATH env var or ~/.orchestration/config.json)
  */
-export function saveCentralConfig(config: CentralConfig, configPath: string = DEFAULT_CONFIG_PATH): void {
+export function saveCentralConfig(config: CentralConfig, configPath: string = getConfigPath()): void {
   const expandedPath = expandPath(configPath);
   const dir = path.dirname(expandedPath);
 
@@ -62,7 +75,7 @@ export function saveCentralConfig(config: CentralConfig, configPath: string = DE
 /**
  * Check if central config exists.
  */
-export function centralConfigExists(configPath: string = DEFAULT_CONFIG_PATH): boolean {
+export function centralConfigExists(configPath: string = getConfigPath()): boolean {
   return fs.existsSync(expandPath(configPath));
 }
 

@@ -65,7 +65,9 @@ export {
   getPromptHooks,
   createDefaultConfig,
   expandPath,
+  getConfigPath,
   DEFAULT_CONFIG_PATH,
+  CONFIG_PATH_ENV_VAR,
 } from './config/config-loader.js';
 
 // Session store
