@@ -6,6 +6,18 @@ import { WorkerSpawner, SpawnResult, SpawnInfo, WorkerStatus } from './worker-sp
 import { WorkerSpawnRequest } from '../session/types.js';
 
 /**
+ * Escapes a string for safe use in PowerShell commands.
+ * Handles backticks, dollar signs, and double quotes.
+ */
+function escapePowerShellString(str: string): string {
+  return str
+    .replace(/`/g, '``')      // Escape backticks first
+    .replace(/\$/g, '`$')     // Escape dollar signs
+    .replace(/"/g, '`"')      // Escape double quotes
+    .replace(/\\/g, '\\\\');  // Escape backslashes for -like pattern
+}
+
+/**
  * Windows Terminal worker spawner.
  * Spawns Claude Code workers in new Windows Terminal tabs.
  */
@@ -155,7 +167,7 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
       spawnSync('powershell', [
         '-NoProfile',
         '-Command',
-        `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'claude.exe' -and $_.CommandLine -like '*${worktreePath.replace(/\\/g, '\\\\')}*' } | ForEach-Object { taskkill /T /F /PID $_.ProcessId }`,
+        `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'claude.exe' -and $_.CommandLine -like '*${escapePowerShellString(worktreePath)}*' } | ForEach-Object { taskkill /T /F /PID $_.ProcessId }`,
       ], {
         stdio: 'ignore',
         windowsHide: true,
