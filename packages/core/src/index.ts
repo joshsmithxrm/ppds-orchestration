@@ -79,7 +79,7 @@ export type { SessionServiceConfig, SpawnOptions } from './session/session-servi
 export { GitUtils } from './git/git-utils.js';
 
 // Worker spawner
-export type { WorkerSpawner, SpawnResult, SpawnInfo } from './spawner/worker-spawner.js';
+export type { WorkerSpawner, SpawnResult, SpawnInfo, WorkerStatus } from './spawner/worker-spawner.js';
 export { WindowsTerminalSpawner, createSpawner } from './spawner/windows-terminal-spawner.js';
 
 // Session watcher

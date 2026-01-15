@@ -1,6 +1,16 @@
 import { WorkerSpawnRequest } from '../session/types.js';
 
 /**
+ * Worker runtime status.
+ */
+export interface WorkerStatus {
+  /** Whether the worker process is currently running. */
+  running: boolean;
+  /** Exit code if the worker has exited. */
+  exitCode?: number;
+}
+
+/**
  * Result of spawning a worker.
  */
 export interface SpawnResult {
@@ -60,4 +70,17 @@ export interface WorkerSpawner {
    * Gets the name of this spawner (for logging/display).
    */
   getName(): string;
+
+  /**
+   * Stops a running worker.
+   * @param spawnId - The spawn ID returned from spawn()
+   */
+  stop(spawnId: string): Promise<void>;
+
+  /**
+   * Gets the current status of a worker.
+   * @param spawnId - The spawn ID returned from spawn()
+   * @returns WorkerStatus with running state and exit code
+   */
+  getStatus(spawnId: string): Promise<WorkerStatus>;
 }
