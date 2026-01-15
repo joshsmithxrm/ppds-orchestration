@@ -116,7 +116,7 @@ describe('Sessions API', () => {
     it('spawns a new session with single issueNumber (backwards compat)', async () => {
       const mockSession = {
         id: '123',
-        issueNumber: 123,
+        issue: { number: 123, title: 'Test Issue' },
         status: 'registered',
       };
       mockMultiRepoService.spawn.mockResolvedValue(mockSession);
@@ -128,21 +128,19 @@ describe('Sessions API', () => {
 
       expect(response.status).toBe(201);
       expect(response.body.session).toEqual(mockSession);
-      // API normalizes single issueNumber to array
-      expect(mockMultiRepoService.spawn).toHaveBeenCalledWith('repo-1', [123], 'single');
+      // API spawns each issue as separate session
+      expect(mockMultiRepoService.spawn).toHaveBeenCalledWith('repo-1', 123, 'single');
     });
 
-    it('spawns a new session with issueNumbers array', async () => {
-      const mockSession = {
-        id: '1',
-        issues: [
-          { number: 1, title: 'Issue 1' },
-          { number: 2, title: 'Issue 2' },
-          { number: 3, title: 'Issue 3' },
-        ],
-        status: 'registered',
-      };
-      mockMultiRepoService.spawn.mockResolvedValue(mockSession);
+    it('spawns separate sessions for each issue in issueNumbers array', async () => {
+      const mockSession1 = { id: '1', issue: { number: 1, title: 'Issue 1' }, status: 'registered' };
+      const mockSession2 = { id: '2', issue: { number: 2, title: 'Issue 2' }, status: 'registered' };
+      const mockSession3 = { id: '3', issue: { number: 3, title: 'Issue 3' }, status: 'registered' };
+
+      mockMultiRepoService.spawn
+        .mockResolvedValueOnce(mockSession1)
+        .mockResolvedValueOnce(mockSession2)
+        .mockResolvedValueOnce(mockSession3);
 
       const app = createApp();
       const response = await request(app)
@@ -150,14 +148,20 @@ describe('Sessions API', () => {
         .send({ issueNumbers: [1, 2, 3] });
 
       expect(response.status).toBe(201);
-      expect(response.body.session).toEqual(mockSession);
-      expect(mockMultiRepoService.spawn).toHaveBeenCalledWith('repo-1', [1, 2, 3], 'single');
+      // Returns last session for backwards compat, plus all sessions array
+      expect(response.body.session).toEqual(mockSession3);
+      expect(response.body.sessions).toEqual([mockSession1, mockSession2, mockSession3]);
+      // spawn called 3 times (once per issue)
+      expect(mockMultiRepoService.spawn).toHaveBeenCalledTimes(3);
+      expect(mockMultiRepoService.spawn).toHaveBeenNthCalledWith(1, 'repo-1', 1, 'single');
+      expect(mockMultiRepoService.spawn).toHaveBeenNthCalledWith(2, 'repo-1', 2, 'single');
+      expect(mockMultiRepoService.spawn).toHaveBeenNthCalledWith(3, 'repo-1', 3, 'single');
     });
 
     it('spawns with ralph mode and starts loop', async () => {
       const mockSession = {
         id: '123',
-        issueNumber: 123,
+        issue: { number: 123, title: 'Test Issue' },
         status: 'registered',
       };
       mockMultiRepoService.spawn.mockResolvedValue(mockSession);
