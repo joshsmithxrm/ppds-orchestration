@@ -87,6 +87,9 @@ export class DockerSpawner implements WorkerSpawner {
       };
     }
 
+    // Run pre-restore on host before spawning container
+    await this.preRestore(request.workingDirectory);
+
     // Write spawn info to worktree
     const spawnInfo: SpawnInfo = {
       spawnId,
@@ -269,5 +272,63 @@ export class DockerSpawner implements WorkerSpawner {
     }
     const infoPath = path.join(claudeDir, 'spawn-info.json');
     await fs.promises.writeFile(infoPath, JSON.stringify(info, null, 2), 'utf-8');
+  }
+
+  /**
+   * Runs pre-restore logic on host before container spawn.
+   * Executes dotnet restore and npm install unconditionally if project files exist.
+   */
+  private async preRestore(workingDirectory: string): Promise<void> {
+    // Check for .NET projects and run dotnet restore
+    const hasDotnetProject = await this.hasFiles(workingDirectory, ['.csproj', '.sln']);
+    if (hasDotnetProject) {
+      await this.runCommand('dotnet', ['restore'], workingDirectory);
+    }
+
+    // Check for Node.js projects and run npm install
+    const packageJsonPath = path.join(workingDirectory, 'package.json');
+    if (fs.existsSync(packageJsonPath)) {
+      await this.runCommand('npm', ['install'], workingDirectory);
+    }
+  }
+
+  /**
+   * Checks if any files with given extensions exist in the directory tree.
+   */
+  private async hasFiles(directory: string, extensions: string[]): Promise<boolean> {
+    try {
+      const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(directory, entry.name);
+        if (entry.isFile()) {
+          for (const ext of extensions) {
+            if (entry.name.endsWith(ext)) {
+              return true;
+            }
+          }
+        } else if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+          const found = await this.hasFiles(fullPath, extensions);
+          if (found) return true;
+        }
+      }
+    } catch {
+      // Ignore errors reading directories
+    }
+    return false;
+  }
+
+  /**
+   * Runs a command in the specified directory.
+   */
+  private runCommand(command: string, args: string[], cwd: string): Promise<void> {
+    return new Promise((resolve) => {
+      const proc = spawn(command, args, {
+        cwd,
+        stdio: 'pipe',
+        shell: true,
+      });
+      proc.on('close', () => resolve());
+      proc.on('error', () => resolve());
+    });
   }
 }
