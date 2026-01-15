@@ -124,7 +124,6 @@ function updateCheckboxesInBody(
   body: string,
   tasks: Task[]
 ): { updatedBody: string; tasksUpdated: number } {
-  let updatedBody = body;
   let tasksUpdated = 0;
 
   // Create a map of task descriptions to their completion state
@@ -138,7 +137,7 @@ function updateCheckboxesInBody(
   // Regex to match GitHub checkboxes: - [ ] or - [x]
   const checkboxRegex = /^(\s*-\s*\[)([x\s])(\]\s*)(.+)$/gm;
 
-  updatedBody = body.replace(checkboxRegex, (match, prefix, checkbox, suffix, description) => {
+  const updatedBody = body.replace(checkboxRegex, (match, prefix, checkbox, suffix, description) => {
     const normalizedDesc = description.toLowerCase().trim();
 
     // Check if we have a matching task

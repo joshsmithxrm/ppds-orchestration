@@ -18,7 +18,6 @@ vi.mock('node:fs', () => ({
 }));
 
 import { spawn, spawnSync } from 'node:child_process';
-import * as fs from 'node:fs';
 
 describe('DockerSpawner', () => {
   let spawner: DockerSpawner;

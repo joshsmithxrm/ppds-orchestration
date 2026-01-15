@@ -124,22 +124,6 @@ export const SessionState = z.object({
 export type SessionState = z.infer<typeof SessionState>;
 
 /**
- * Helper to get the issue from a session.
- * @deprecated Use session.issue directly. Kept for backwards compatibility.
- */
-export function getPrimaryIssue(session: SessionState): IssueRef {
-  return session.issue;
-}
-
-/**
- * Helper to get the issue number from a session.
- * @deprecated Use session.issue.number directly. Kept for backwards compatibility.
- */
-export function getIssueNumbers(session: SessionState): number[] {
-  return [session.issue.number];
-}
-
-/**
  * Static context written to the worktree at spawn time.
  * Skills and workers read this for identity.
  */

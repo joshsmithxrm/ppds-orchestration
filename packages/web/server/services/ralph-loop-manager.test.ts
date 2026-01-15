@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fsActual from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CentralConfig, RalphConfig, SessionState, ReviewResult } from '@ppds-orchestration/core';
+import { CentralConfig, RalphConfig, SessionState } from '@ppds-orchestration/core';
 
 // Mock the review/notification functions from core
 vi.mock('@ppds-orchestration/core', async (importOriginal) => {

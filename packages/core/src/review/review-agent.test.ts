@@ -1,6 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { invokeReviewAgent, type ReviewAgentOptions } from './review-agent.js';
 
 // Mock child_process

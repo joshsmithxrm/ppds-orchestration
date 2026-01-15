@@ -7,8 +7,6 @@ export {
   WorktreeStatus,
   ExecutionMode,
   IssueRef,
-  getPrimaryIssue,
-  getIssueNumbers,
   STALE_THRESHOLD_MS,
 } from './session/types.js';
 
