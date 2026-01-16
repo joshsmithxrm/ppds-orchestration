@@ -45,22 +45,22 @@ export class WorkerPromptBuilder {
       additionalSections,
     } = context;
 
-    // Ralph mode: minimal prompt - worker just does tasks
+    // Ralph mode: minimal prompt - worker does ONE task then exits
+    // Runs in headless mode (-p flag), process exit signals completion
     if (mode === 'ralph') {
       let prompt = `# Session: Issue #${issue.number}
 
 ## Issue
 **${issue.title}**
 
-Read \`IMPLEMENTATION_PLAN.md\` in the worktree root for full context and tasks.
+Read IMPLEMENTATION_PLAN.md in the worktree root for full context and tasks.
 
-Work on the **first unchecked \`[ ]\` task** in IMPLEMENTATION_PLAN.md.
+Work on the first unchecked [ ] task in IMPLEMENTATION_PLAN.md.
 
 1. Read IMPLEMENTATION_PLAN.md
-2. Find the first unchecked \`[ ]\` task - that is YOUR task
+2. Find the first unchecked [ ] task - that is YOUR task
 3. Implement it and run the test command from the task
-4. Mark it \`[x]\` when done
-5. Run \`/exit\` to finish this iteration
+4. Mark it [x] when done
 `;
 
       if (additionalSections && additionalSections.length > 0) {

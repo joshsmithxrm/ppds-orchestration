@@ -44,6 +44,7 @@ const DEFAULT_CONFIG: DockerSpawnerConfig = {
 export class DockerSpawner implements WorkerSpawner {
   private config: DockerSpawnerConfig;
   private runningContainers = new Map<string, string>(); // spawnId -> containerId
+  private spawnedWorkers = new Map<string, string>(); // spawnId -> worktreePath
 
   constructor(config?: Partial<DockerSpawnerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -144,6 +145,9 @@ export class DockerSpawner implements WorkerSpawner {
           this.runningContainers.set(spawnId, containerId);
         }
 
+        // Track worktree path for signal file detection
+        this.spawnedWorkers.set(spawnId, request.workingDirectory);
+
         resolve({
           success: true,
           spawnId,
@@ -182,6 +186,21 @@ export class DockerSpawner implements WorkerSpawner {
    * Gets the status of a worker container.
    */
   async getStatus(spawnId: string): Promise<WorkerStatus> {
+    // Check for iteration-done signal file first (worker signaled completion)
+    const worktreePath = this.spawnedWorkers.get(spawnId);
+    if (worktreePath) {
+      const iterationDonePath = path.join(worktreePath, '.claude', 'iteration-done');
+      if (fs.existsSync(iterationDonePath)) {
+        // Clean up signal file and report not running
+        try {
+          fs.unlinkSync(iterationDonePath);
+        } catch {
+          // Ignore cleanup errors
+        }
+        return { running: false, exitCode: 0 };
+      }
+    }
+
     const containerId = this.runningContainers.get(spawnId);
     if (!containerId) {
       return { running: false };

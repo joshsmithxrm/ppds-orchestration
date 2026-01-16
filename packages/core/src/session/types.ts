@@ -193,6 +193,8 @@ export interface WorkerSpawnRequest {
   promptContent: string;
   githubOwner: string;
   githubRepo: string;
+  /** Ralph iteration number (1-indexed, for log file naming). */
+  iteration?: number;
 }
 
 /**

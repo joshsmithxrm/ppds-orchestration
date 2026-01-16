@@ -295,6 +295,19 @@ export class MultiRepoService {
   }
 
   /**
+   * Restart an existing session (for Ralph loop iterations).
+   * Spawns a fresh worker in the existing worktree.
+   */
+  async restart(
+    repoId: string,
+    sessionId: string,
+    iteration?: number
+  ): Promise<SessionState> {
+    const service = this.getService(repoId);
+    return service.restart(sessionId, iteration);
+  }
+
+  /**
    * Forward message to worker.
    */
   async forward(

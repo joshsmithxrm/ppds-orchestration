@@ -226,10 +226,10 @@ export class RalphLoopManager {
 
         state.lastChecked = new Date().toISOString();
 
-        // PRIMARY: Check if worker has stopped (via /exit or process exit)
-        // This is the main detection mechanism - worker runs, exits, we evaluate
+        // Check if worker process has exited (headless mode exits when done)
         const workerStatus = await this.getWorkerStatus(state, session);
         if (!workerStatus.running) {
+          console.log(`Ralph: Worker process exited for ${state.repoId}/${state.sessionId} (code: ${workerStatus.exitCode})`);
           await this.handleWorkerStopped(state, session);
           continue;
         }
@@ -410,17 +410,18 @@ export class RalphLoopManager {
       doneSignalDetected: false,
     });
 
-    // Re-spawn the worker
+    // Restart the worker for this iteration
     try {
-      await this.multiRepoService.spawn(
+      await this.multiRepoService.restart(
         state.repoId,
-        parseInt(state.sessionId, 10),
-        'ralph'
+        state.sessionId,
+        state.currentIteration
       );
       this.emit('iteration_start', state);
+      console.log(`Ralph: Started iteration ${state.currentIteration} for ${state.repoId}/${state.sessionId}`);
     } catch (error) {
-      console.error('Failed to re-spawn worker:', error);
-      this.handleLoopStuck(state, `Failed to re-spawn: ${(error as Error).message}`);
+      console.error('Failed to restart worker:', error);
+      this.handleLoopStuck(state, `Failed to restart: ${(error as Error).message}`);
     }
   }
 
@@ -492,7 +493,7 @@ export class RalphLoopManager {
   private async getWorkerStatus(
     state: RalphLoopState,
     session: SessionState
-  ): Promise<{ running: boolean }> {
+  ): Promise<{ running: boolean; exitCode?: number }> {
     if (!session.spawnId) {
       // No spawnId means worker was never spawned or is legacy
       return { running: false };

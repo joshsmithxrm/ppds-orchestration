@@ -221,10 +221,12 @@ export class SessionService {
   }
 
   /**
-   * Restarts a stuck session by spawning a fresh worker in the existing worktree.
-   * The worker will see any forwarded guidance and continue from the current state.
+   * Restarts a session by spawning a fresh worker in the existing worktree.
+   * Used for Ralph loop iterations and recovering stuck sessions.
+   * @param sessionId - The session to restart
+   * @param iteration - Optional iteration number for log file naming
    */
-  async restart(sessionId: string): Promise<SessionState> {
+  async restart(sessionId: string, iteration?: number): Promise<SessionState> {
     const session = await this.store.load(sessionId);
 
     if (!session) {
@@ -263,6 +265,7 @@ export class SessionService {
       promptContent,
       githubOwner: this.config.githubOwner,
       githubRepo: this.config.githubRepo,
+      iteration,
     });
 
     if (!spawnResult.success) {
