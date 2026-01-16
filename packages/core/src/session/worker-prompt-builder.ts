@@ -46,21 +46,33 @@ export class WorkerPromptBuilder {
     } = context;
 
     // Ralph mode: minimal prompt - worker does ONE task then exits
-    // Runs in headless mode (-p flag), process exit signals completion
+    // Runs in headless mode (-p flag), writes status file to signal completion
     if (mode === 'ralph') {
       let prompt = `# Session: Issue #${issue.number}
 
 ## Issue
 **${issue.title}**
 
-Read IMPLEMENTATION_PLAN.md in the worktree root for full context and tasks.
+You are an autonomous worker. Read IMPLEMENTATION_PLAN.md in the worktree root for full context and tasks.
 
-Work on the first unchecked [ ] task in IMPLEMENTATION_PLAN.md.
-
+## Your Task
 1. Read IMPLEMENTATION_PLAN.md
-2. Find the first unchecked [ ] task - that is YOUR task
-3. Implement it and run the test command from the task
+2. Find the first unchecked [ ] item - that is YOUR only task
+3. Implement it and verify it works
 4. Mark it [x] when done
+
+## When Done
+After completing your task, write your status to \`.claude/.worker-status\`:
+
+- If there are MORE unchecked [ ] items remaining:
+  \`\`\`bash
+  mkdir -p .claude && echo "task_done" > .claude/.worker-status
+  \`\`\`
+
+- If ALL items are now checked [x] (you completed the last one):
+  \`\`\`bash
+  mkdir -p .claude && echo "complete" > .claude/.worker-status
+  \`\`\`
 `;
 
       if (additionalSections && additionalSections.length > 0) {

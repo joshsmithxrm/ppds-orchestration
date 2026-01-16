@@ -428,38 +428,45 @@ export class RalphLoopManager {
   /**
    * Handle worker stopped event.
    * Called when poll detects worker is no longer running.
-   * Evaluates task progress and decides: review, respawn, or count failure.
+   * Reads .claude/.worker-status to determine next action.
    */
   private async handleWorkerStopped(
     state: RalphLoopState,
     session: SessionState
   ): Promise<void> {
-    const completedCount = this.getCompletedTaskCount(state, session.worktreePath);
-    const previousCount = state.lastCompletedTaskCount ?? 0;
-    const progress = completedCount - previousCount;
+    // Read worker status signal
+    const statusFile = path.join(session.worktreePath, '.claude', '.worker-status');
+    let signal = '';
 
-    // Update tracking
-    state.lastCompletedTaskCount = completedCount;
+    try {
+      if (fs.existsSync(statusFile)) {
+        signal = fs.readFileSync(statusFile, 'utf-8').trim();
+        // Clear the file for next iteration
+        fs.unlinkSync(statusFile);
+      }
+    } catch {
+      // Ignore file read errors
+    }
 
     // Mark current iteration as ended
     const currentIteration = state.iterations[state.iterations.length - 1];
     if (currentIteration) {
       currentIteration.endedAt = new Date().toISOString();
-      currentIteration.exitType = progress > 0 ? 'clean' : 'abnormal';
+      currentIteration.exitType = signal ? 'clean' : 'abnormal';
       currentIteration.statusAtEnd = session.status;
     }
 
-    // Check if ALL tasks done (promise met)
-    if (await this.checkPromise(state, session)) {
-      console.log(`Ralph: All tasks complete for ${state.repoId}/${state.sessionId}, entering review`);
+    // Handle "complete" signal - all tasks done
+    if (signal === 'complete') {
+      console.log(`Ralph: Worker signaled complete for ${state.repoId}/${state.sessionId}, entering review`);
+      await this.performGitOperations(state, session.worktreePath);
       await this.handlePromiseMet(state, session.worktreePath);
       return;
     }
 
-    // Check if progress was made
-    if (progress > 0) {
-      // Success iteration - respawn without counting against max
-      console.log(`Ralph: Task completed (${previousCount} → ${completedCount}) for ${state.repoId}/${state.sessionId}, respawning`);
+    // Handle "task_done" signal - respawn for next task
+    if (signal === 'task_done') {
+      console.log(`Ralph: Worker signaled task_done for ${state.repoId}/${state.sessionId}, respawning`);
       await this.performGitOperations(state, session.worktreePath);
       this.emit('iteration_end', state);
 
@@ -471,12 +478,12 @@ export class RalphLoopManager {
       return;
     }
 
-    // No progress - count as failure
+    // No signal = worker crashed or didn't complete properly
     state.failedIterations = (state.failedIterations ?? 0) + 1;
-    console.log(`Ralph: No progress for ${state.repoId}/${state.sessionId}, failure ${state.failedIterations}/${state.config.maxIterations}`);
+    console.log(`Ralph: No signal from worker ${state.repoId}/${state.sessionId}, failure ${state.failedIterations}/${state.config.maxIterations}`);
 
     if (state.failedIterations >= state.config.maxIterations) {
-      this.handleLoopStuck(state, `Max failed iterations (${state.config.maxIterations}) reached without progress`);
+      this.handleLoopStuck(state, `Max failed iterations (${state.config.maxIterations}) reached without signal`);
       return;
     }
 
