@@ -25,7 +25,7 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
   }
 
   /**
-   * Always available on Windows - just needs cmd.exe and claude CLI.
+   * Always available on Windows - just needs claude CLI.
    */
   isAvailable(): boolean {
     return process.platform === 'win32';
@@ -83,20 +83,23 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
     logStream.write(`# Worktree: ${request.workingDirectory}\n`);
     logStream.write(`${'='.repeat(60)}\n\n`);
 
-    // Build the command: pipe prompt to claude with -p flag
-    // Using cmd /c to handle the pipe properly on Windows
-    const command = 'cmd';
-    const args = [
-      '/c',
-      `type "${promptPath}" | claude -p --dangerously-skip-permissions -`,
-    ];
+    // Read prompt content to pipe to stdin (more reliable than cmd /c with type)
+    const promptContent = request.promptContent;
+
+    // Spawn claude directly with stdin pipe
+    const command = 'claude';
+    const args = ['-p', '--dangerously-skip-permissions'];
 
     return new Promise((resolve) => {
       const proc = spawn(command, args, {
         cwd: request.workingDirectory,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],  // stdin=pipe for prompt input
         windowsHide: true,
       });
+
+      // Write prompt to stdin and close
+      proc.stdin?.write(promptContent);
+      proc.stdin?.end();
 
       // Capture stdout to log
       proc.stdout?.on('data', (data) => {

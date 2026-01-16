@@ -4,6 +4,7 @@ interface SoundsConfig {
   onSpawn?: string;
   onStuck?: string;
   onComplete?: string;
+  volume?: number; // 0-1, default 0.25
 }
 
 export interface UseSoundsReturn {
@@ -118,13 +119,19 @@ export function useSounds(config: SoundsConfig | undefined): UseSoundsReturn {
 
         const source = ctx.createBufferSource();
         source.buffer = buffer;
-        source.connect(ctx.destination);
+
+        // Apply volume (default 25%)
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = config?.volume ?? 0.25;
+        source.connect(gainNode);
+        gainNode.connect(ctx.destination);
+
         source.start(0);
       } catch (error) {
         console.warn('Failed to play sound:', error);
       }
     },
-    [enabled, initAudio]
+    [enabled, initAudio, config?.volume]
   );
 
   const toggle = useCallback(() => {

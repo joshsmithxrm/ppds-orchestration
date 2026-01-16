@@ -22,10 +22,10 @@ const createTestIssue = (number: number): IssueRef => ({
 
 describe('WindowsTerminalSpawner', () => {
   describe('WindowsTerminalSpawner class', () => {
-    it('should have getName return "Windows Terminal"', async () => {
+    it('should have getName return "Headless Spawner"', async () => {
       const { WindowsTerminalSpawner } = await import('./windows-terminal-spawner.js');
       const spawner = new WindowsTerminalSpawner();
-      expect(spawner.getName()).toBe('Windows Terminal');
+      expect(spawner.getName()).toBe('Headless Spawner');
     });
 
     it('should implement WorkerSpawner interface', async () => {

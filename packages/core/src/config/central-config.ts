@@ -206,6 +206,8 @@ export const SoundsConfig = z.object({
   enabled: z.boolean().default(true),
   /** Mute sounds for Ralph loop iterations (default: false) */
   muteRalph: z.boolean().default(false),
+  /** Volume level 0-1 (default: 0.25) */
+  volume: z.number().min(0).max(1).default(0.25),
   /** Base directory for sound files (served via /api/sounds) */
   soundsDir: z.string().optional(),
   /** Sound URL for worker spawn events */
