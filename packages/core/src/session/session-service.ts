@@ -138,6 +138,11 @@ export class SessionService {
       this.config.baseBranch ?? 'origin/main'
     );
 
+    // Write issue body to IMPLEMENTATION_PLAN.md in worktree
+    // Worker reads full PRD/plan from this file, not from the prompt
+    const planPath = path.join(worktreePath, 'IMPLEMENTATION_PLAN.md');
+    await fs.promises.writeFile(planPath, issueData.body || '', 'utf-8');
+
     // Write worker prompt
     const promptPath = await this.writeWorkerPrompt(
       worktreePath,
@@ -146,6 +151,9 @@ export class SessionService {
       mode,
       options?.additionalPromptSections
     );
+
+    // Read prompt content for spawner (avoids file read indirection in worker)
+    const promptContent = await fs.promises.readFile(promptPath, 'utf-8');
 
     // Write session context (static identity file)
     const now = new Date().toISOString();
@@ -188,6 +196,7 @@ export class SessionService {
       issue: issueInfo,
       workingDirectory: worktreePath,
       promptFilePath: promptPath,
+      promptContent,
       githubOwner: this.config.githubOwner,
       githubRepo: this.config.githubRepo,
     });
@@ -199,11 +208,12 @@ export class SessionService {
       throw new Error(spawnResult.error ?? 'Failed to spawn worker');
     }
 
-    // Update to working status
+    // Update to working status with spawnId for status tracking
     const updatedSession: SessionState = {
       ...session,
       status: 'working',
       lastHeartbeat: new Date().toISOString(),
+      spawnId: spawnResult.spawnId,
     };
     await this.store.save(updatedSession);
 
@@ -221,8 +231,10 @@ export class SessionService {
       throw new Error(`Session '${sessionId}' not found`);
     }
 
-    if (session.status !== 'stuck') {
-      throw new Error(`Can only restart stuck sessions (current status: ${session.status})`);
+    // Allow restarting any session except terminal states
+    const terminalStatuses = ['cancelled', 'deleting', 'deletion_failed'];
+    if (terminalStatuses.includes(session.status)) {
+      throw new Error(`Cannot restart ${session.status} sessions`);
     }
 
     // Check spawner availability
@@ -235,11 +247,12 @@ export class SessionService {
       throw new Error(`Worktree no longer exists at ${session.worktreePath}`);
     }
 
-    // Re-read the prompt file path
+    // Re-read the prompt file
     const promptPath = path.join(session.worktreePath, '.claude', 'session-prompt.md');
     if (!fs.existsSync(promptPath)) {
       throw new Error(`Worker prompt not found at ${promptPath}`);
     }
+    const promptContent = await fs.promises.readFile(promptPath, 'utf-8');
 
     // Spawn a fresh worker in the existing worktree
     const spawnResult = await this.spawner.spawn({
@@ -247,6 +260,7 @@ export class SessionService {
       issue: session.issue,
       workingDirectory: session.worktreePath,
       promptFilePath: promptPath,
+      promptContent,
       githubOwner: this.config.githubOwner,
       githubRepo: this.config.githubRepo,
     });
@@ -255,12 +269,13 @@ export class SessionService {
       throw new Error(spawnResult.error ?? 'Failed to restart worker');
     }
 
-    // Update status back to working
+    // Update status back to working with new spawnId
     const updatedSession: SessionState = {
       ...session,
       status: 'working',
       stuckReason: undefined, // Clear the stuck reason
       lastHeartbeat: new Date().toISOString(),
+      spawnId: spawnResult.spawnId,
     };
     await this.store.save(updatedSession);
 
@@ -269,26 +284,17 @@ export class SessionService {
 
   /**
    * Lists all sessions (including completed).
+   * Sessions are NEVER auto-deleted - only explicit user action removes them.
+   * Adds worktreeMissing flag for UI to show warnings.
    */
-  async list(): Promise<SessionState[]> {
+  async list(): Promise<(SessionState & { worktreeMissing?: boolean })[]> {
     const sessions = await this.store.listAll();
 
-    // Clean up orphaned sessions (worktrees that no longer exist)
-    const validSessions: SessionState[] = [];
-
-    for (const session of sessions) {
-      // For completed/cancelled sessions, keep them even if worktree is gone
-      if (session.status === 'complete' || session.status === 'cancelled') {
-        validSessions.push(session);
-      } else if (fs.existsSync(session.worktreePath)) {
-        validSessions.push(session);
-      } else {
-        // Worktree was removed externally, clean up session
-        await this.store.delete(session.id);
-      }
-    }
-
-    return validSessions;
+    // Add worktreeMissing flag for UI, but NEVER auto-delete sessions
+    return sessions.map(session => ({
+      ...session,
+      worktreeMissing: !fs.existsSync(session.worktreePath),
+    }));
   }
 
   /**
@@ -301,26 +307,22 @@ export class SessionService {
 
   /**
    * Lists sessions with cleanup info.
+   * Sessions are NEVER auto-deleted - only explicit user action removes them.
+   * cleanedIssueNumbers is kept for backwards compatibility but always empty.
    */
-  async listWithCleanupInfo(): Promise<SessionListResult> {
+  async listWithCleanupInfo(): Promise<SessionListResult & { sessions: (SessionState & { worktreeMissing?: boolean })[] }> {
     const sessions = await this.store.listAll();
-    const validSessions: SessionState[] = [];
-    const cleanedIssueNumbers: number[] = [];
 
-    for (const session of sessions) {
-      // For completed/cancelled sessions, keep them even if worktree is gone
-      if (session.status === 'complete' || session.status === 'cancelled') {
-        validSessions.push(session);
-      } else if (fs.existsSync(session.worktreePath)) {
-        validSessions.push(session);
-      } else {
-        // Worktree was removed externally, clean up session
-        await this.store.delete(session.id);
-        cleanedIssueNumbers.push(session.issue.number);
-      }
-    }
+    // Add worktreeMissing flag for UI, but NEVER auto-delete sessions
+    const enrichedSessions = sessions.map(session => ({
+      ...session,
+      worktreeMissing: !fs.existsSync(session.worktreePath),
+    }));
 
-    return { sessions: validSessions, cleanedIssueNumbers };
+    return {
+      sessions: enrichedSessions,
+      cleanedIssueNumbers: [], // No auto-cleanup - user must explicitly delete
+    };
   }
 
   /**
@@ -696,6 +698,14 @@ export class SessionService {
    */
   getSessionsDir(): string {
     return this.store.getSessionsDir();
+  }
+
+  /**
+   * Gets the status of a spawned worker.
+   * Used by Ralph loop to detect when workers have stopped.
+   */
+  async getWorkerStatus(spawnId: string): Promise<{ running: boolean; exitCode?: number }> {
+    return this.spawner.getStatus(spawnId);
   }
 
   // ============================================

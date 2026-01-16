@@ -119,6 +119,9 @@ export const SessionState = z.object({
 
   /** Feedback from the last review (used to guide next iteration). */
   lastReviewFeedback: z.string().optional(),
+
+  /** Spawn ID from the worker spawner (used for status checks and stopping). */
+  spawnId: z.string().optional(),
 });
 
 export type SessionState = z.infer<typeof SessionState>;
@@ -186,6 +189,8 @@ export interface WorkerSpawnRequest {
   issue: IssueRef;
   workingDirectory: string;
   promptFilePath: string;
+  /** Full prompt content to pass to Claude (avoids file read indirection). */
+  promptContent: string;
   githubOwner: string;
   githubRepo: string;
 }
@@ -212,6 +217,9 @@ export const STALE_THRESHOLD_MS = 90_000; // 90 seconds
  * Represents an orphaned worktree (worktree exists without session file).
  */
 export const OrphanedWorktree = z.object({
+  /** Repo ID this orphan belongs to. */
+  repoId: z.string(),
+
   /** Absolute path to the orphaned worktree. */
   worktreePath: z.string(),
 

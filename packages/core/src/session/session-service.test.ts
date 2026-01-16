@@ -279,16 +279,28 @@ describe('SessionService', () => {
       );
     });
 
-    it('should throw if session is not stuck', async () => {
+    it('should throw if session is in terminal state', async () => {
+      const session: SessionState = {
+        ...createTestSession('123', 123, worktreePath),
+        status: 'cancelled',
+      };
+      fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
+
+      await expect(service.restart('123')).rejects.toThrow(
+        'Cannot restart cancelled sessions'
+      );
+    });
+
+    it('should allow restarting non-terminal sessions', async () => {
       const session: SessionState = {
         ...createTestSession('123', 123, worktreePath),
         status: 'working',
       };
       fs.writeFileSync(path.join(sessionsDir, 'work-123.json'), JSON.stringify(session));
 
-      await expect(service.restart('123')).rejects.toThrow(
-        'Can only restart stuck sessions (current status: working)'
-      );
+      // Should not throw - non-terminal sessions can be restarted
+      const result = await service.restart('123');
+      expect(result.status).toBe('working');
     });
 
     it('should throw if worktree does not exist', async () => {

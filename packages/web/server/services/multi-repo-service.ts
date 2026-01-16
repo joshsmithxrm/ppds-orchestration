@@ -283,6 +283,18 @@ export class MultiRepoService {
   }
 
   /**
+   * Get worker status (running/stopped).
+   * Used by Ralph loop to detect when workers have exited.
+   */
+  async getWorkerStatus(
+    repoId: string,
+    spawnId: string
+  ): Promise<{ running: boolean; exitCode?: number }> {
+    const service = this.getService(repoId);
+    return service.getWorkerStatus(spawnId);
+  }
+
+  /**
    * Forward message to worker.
    */
   async forward(
@@ -433,6 +445,7 @@ export class MultiRepoService {
       }
 
       orphans.push({
+        repoId,
         worktreePath: wt.path,
         branchName: wt.branch,
         issueNumber,

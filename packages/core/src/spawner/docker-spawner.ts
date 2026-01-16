@@ -254,10 +254,10 @@ export class DockerSpawner implements WorkerSpawner {
     }
 
     // Image and command
+    // Use sh -c to pipe prompt content directly to Claude via stdin
+    // This avoids file read indirection issues and works reliably with mounted volumes
     args.push(this.config.image);
-    args.push('claude');
-    args.push('--dangerously-skip-permissions');
-    args.push(`You are an autonomous worker for Issue #${request.issue.number}. Read .claude/session-prompt.md for your full instructions and begin.`);
+    args.push('sh', '-c', 'cat /workspace/.claude/session-prompt.md | claude --dangerously-skip-permissions -p -');
 
     return args;
   }

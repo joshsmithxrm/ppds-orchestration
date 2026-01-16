@@ -28,146 +28,84 @@ export interface PromptContext {
  *
  * Extracted from SessionService to follow Single Responsibility Principle.
  * This class handles all prompt template generation logic.
+ *
+ * Supports two execution modes:
+ * - 'single': Autonomous worker that completes full issue and ships PR
+ * - 'ralph': Iterative worker that completes ONE task per session, then exits
  */
 export class WorkerPromptBuilder {
   /**
    * Builds the worker prompt markdown.
+   * Content varies based on execution mode.
    */
   build(context: PromptContext): string {
     const {
-      githubOwner,
-      githubRepo,
       issue,
-      branchName,
+      mode = 'single',
       additionalSections,
     } = context;
 
-    // Build the header
-    let prompt = this.buildIssueHeader(issue, branchName, githubOwner, githubRepo);
+    // Ralph mode: minimal prompt - worker just does tasks
+    if (mode === 'ralph') {
+      let prompt = `# Session: Issue #${issue.number}
 
-    // Add common sections
-    prompt += this.buildCommonSections();
+## Issue
+**${issue.title}**
 
-    // Add additional prompt sections from hooks
-    if (additionalSections && additionalSections.length > 0) {
-      prompt += '\n## Additional Instructions\n\n';
-      prompt += additionalSections.join('\n\n');
-      prompt += '\n';
+Read \`IMPLEMENTATION_PLAN.md\` in the worktree root for full context and tasks.
+
+Work on the **first unchecked \`[ ]\` task** in IMPLEMENTATION_PLAN.md.
+
+1. Read IMPLEMENTATION_PLAN.md
+2. Find the first unchecked \`[ ]\` task - that is YOUR task
+3. Implement it and run the test command from the task
+4. Mark it \`[x]\` when done
+5. Run \`/exit\` to finish this iteration
+`;
+
+      if (additionalSections && additionalSections.length > 0) {
+        prompt += '\n' + additionalSections.join('\n\n') + '\n';
+      }
+
+      return prompt;
     }
 
-    return prompt;
+    // Single mode: full autonomous workflow
+    return this.buildSingleModePrompt(context);
   }
 
   /**
-   * Builds the header section for an issue session.
+   * Builds the full prompt for single/autonomous mode.
+   * Single mode workers work autonomously until PR is ready.
    */
-  private buildIssueHeader(
-    issue: IssueRef,
-    branchName: string,
-    githubOwner: string,
-    githubRepo: string
-  ): string {
-    return `# Session: Issue #${issue.number}
+  private buildSingleModePrompt(context: PromptContext): string {
+    const { githubOwner, githubRepo, issue, branchName, additionalSections } = context;
+
+    let prompt = `# Session: Issue #${issue.number}
 
 ## Repository Context
-
-**IMPORTANT:** For all GitHub operations (CLI and MCP tools), use these values:
 - Owner: \`${githubOwner}\`
 - Repo: \`${githubRepo}\`
 - Issue: \`#${issue.number}\`
 - Branch: \`${branchName}\`
 
-Examples:
-\`\`\`bash
-gh issue view ${issue.number} --repo ${githubOwner}/${githubRepo}
-gh pr create --repo ${githubOwner}/${githubRepo} ...
-\`\`\`
-
 ## Issue
 **${issue.title}**
 
 ${issue.body || '_No description provided._'}
-`;
-  }
-
-  /**
-   * Builds the common sections that appear in all prompts.
-   */
-  private buildCommonSections(): string {
-    return `
-## Guidance
-
-If \`forwardedMessage\` exists in the session file, incorporate that guidance
-into your approach before continuing.
-
-## Status Reporting
-
-**Report status at each phase transition** by updating the session file directly.
-
-**Session file location:** Read \`session-context.json\` in the worktree root to find the \`sessionFilePath\` field.
-
-| Phase | Status Value |
-|-------|--------------|
-| Starting | \`planning\` |
-| Plan complete | \`planning_complete\` |
-| Implementing | \`working\` |
-| Stuck | \`stuck\` (also set \`stuckReason\`) |
-| Complete | \`complete\` |
-
-**How to update status:**
-1. Read the session file (path from \`session-context.json\` → \`sessionFilePath\`)
-2. Update the \`status\` field to the new value
-3. Update \`lastHeartbeat\` to current ISO timestamp
-4. If stuck, also set \`stuckReason\` to explain what you need
-5. Write the updated JSON back to the session file
-
-**Note:** \`/ship\` automatically updates status to \`shipping\` → \`reviews_in_progress\` → \`complete\`.
 
 ## Workflow
-
-### Phase 1: Planning
-1. **First:** Update session file with \`"status": "planning"\`
-2. Read and understand the issue requirements
-3. Explore the codebase to understand existing patterns
-4. Create a detailed implementation plan
-5. Write your plan to \`.claude/worker-plan.md\`
-6. **Then:** Update session file with \`"status": "planning_complete"\`
-
-### Message Check Protocol
-
-Check for forwarded messages at these points:
-1. **After each phase** - planning complete, before implementation, after tests
-2. **When stuck** - check every 5 minutes while waiting for guidance
-3. **Before major decisions** - architectural choices, security implementations
-
-**How to check:** Read the session file and check the \`forwardedMessage\` field.
-
-**If message exists:**
-1. Read and incorporate the guidance into your approach
-2. Clear the message by setting \`forwardedMessage\` to \`undefined\` (or remove the field)
-3. Continue with your work (the guidance may unstick you)
-
-**Important:** When your status is \`stuck\`, check for messages periodically - the orchestrator may have sent guidance that unblocks you.
-
-### Phase 3: Implementation
-1. **First:** Update session file with \`"status": "working"\`
-2. Follow your plan in \`.claude/worker-plan.md\`
-3. Build and test your changes
-4. Create PR via \`/ship\` (handles remaining status updates automatically)
-
-### Domain Gates
-If you encounter these, set status to \`stuck\` with a clear reason:
-- Auth/Security decisions
-- Performance-critical code
-- Breaking changes
-- Data migration
-
-**Example:** Update session file with \`"status": "stuck"\` and \`"stuckReason": "Need auth decision: should we use JWT or session tokens?"\`
-
-## Reference
-- Follow CLAUDE.md for coding standards
-- Build must pass before shipping
-- Tests must pass before shipping
+1. Read and understand the issue
+2. Explore the codebase
+3. Implement the solution
+4. Build and test
+5. Create PR via \`/ship\`
 `;
+
+    if (additionalSections && additionalSections.length > 0) {
+      prompt += '\n' + additionalSections.join('\n\n') + '\n';
+    }
+
+    return prompt;
   }
 }

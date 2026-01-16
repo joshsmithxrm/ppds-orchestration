@@ -30,9 +30,10 @@ interface Repo {
 }
 
 interface OrphanedWorktree {
+  repoId: string;
   worktreePath: string;
   branchName?: string;
-  issueNumbers?: number[];
+  issueNumber?: number;
   sessionId?: string;
   detectedAt: string;
   contextError?: string;
@@ -519,9 +520,9 @@ function Dashboard() {
                 >
                   <div>
                     <div className="text-sm text-orange-200 font-mono">{displayName}</div>
-                    {orphan.issueNumbers && orphan.issueNumbers.length > 0 && (
+                    {orphan.issueNumber && (
                       <div className="text-xs text-orange-400">
-                        Issues: {orphan.issueNumbers.map((n) => `#${n}`).join(', ')}
+                        Issue: #{orphan.issueNumber}
                       </div>
                     )}
                     {orphan.branchName && (
@@ -529,16 +530,7 @@ function Dashboard() {
                     )}
                   </div>
                   <button
-                    onClick={() => {
-                      // Extract repoId from path - worktree naming convention: {prefix}issue-{n}
-                      // The repo is determined by matching against configured repos
-                      const matchingRepo = repos.find((r) =>
-                        orphan.worktreePath.toLowerCase().includes(r.id.toLowerCase())
-                      );
-                      if (matchingRepo) {
-                        handleCleanupOrphan(matchingRepo.id, orphan.worktreePath);
-                      }
-                    }}
+                    onClick={() => handleCleanupOrphan(orphan.repoId, orphan.worktreePath)}
                     disabled={cleaningOrphan === orphan.worktreePath}
                     className="text-sm px-3 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded disabled:opacity-50 transition-colors"
                   >

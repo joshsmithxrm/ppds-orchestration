@@ -5,6 +5,63 @@ import { SessionStatus, ExecutionMode, SessionState } from '@ppds-orchestration/
 
 export const sessionsRouter = Router();
 
+// ============================================
+// IMPORTANT: /orphans routes MUST come before /:repoId routes
+// Otherwise Express matches 'orphans' as a repoId parameter
+// ============================================
+
+/**
+ * GET /api/sessions/orphans
+ * List all detected orphaned worktrees across all repos.
+ */
+sessionsRouter.get('/orphans', async (req: Request, res: Response) => {
+  try {
+    const service: MultiRepoService = req.app.locals.multiRepoService;
+    const orphans = await service.reconcileOrphans();
+    res.json({ orphans, count: orphans.length });
+  } catch (error) {
+    console.error('Error listing orphans:', error);
+    res.status(500).json({ error: 'Failed to list orphans' });
+  }
+});
+
+/**
+ * DELETE /api/sessions/orphans/:repoId
+ * Clean up an orphaned worktree.
+ * Body: { worktreePath: string }
+ */
+sessionsRouter.delete('/orphans/:repoId', async (req: Request, res: Response) => {
+  try {
+    const service: MultiRepoService = req.app.locals.multiRepoService;
+    const { repoId } = req.params;
+    const { worktreePath } = req.body;
+
+    if (!worktreePath) {
+      return res.status(400).json({ error: 'worktreePath is required' });
+    }
+
+    const result = await service.cleanupOrphan(repoId, worktreePath);
+
+    if (!result.success) {
+      return res.status(409).json({
+        error: result.error,
+        cleanupFailed: true,
+      });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error cleaning up orphan:', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Failed to cleanup orphan',
+    });
+  }
+});
+
+// ============================================
+// Regular session routes
+// ============================================
+
 /**
  * GET /api/sessions
  * List all sessions across all repos.
@@ -245,50 +302,3 @@ sessionsRouter.patch('/:repoId/:sessionId/rollback-delete', async (req: Request,
   }
 });
 
-/**
- * GET /api/orphans
- * List all detected orphaned worktrees across all repos.
- */
-sessionsRouter.get('/orphans', async (req: Request, res: Response) => {
-  try {
-    const service: MultiRepoService = req.app.locals.multiRepoService;
-    const orphans = await service.reconcileOrphans();
-    res.json({ orphans, count: orphans.length });
-  } catch (error) {
-    console.error('Error listing orphans:', error);
-    res.status(500).json({ error: 'Failed to list orphans' });
-  }
-});
-
-/**
- * DELETE /api/orphans/:repoId
- * Clean up an orphaned worktree.
- * Body: { worktreePath: string }
- */
-sessionsRouter.delete('/orphans/:repoId', async (req: Request, res: Response) => {
-  try {
-    const service: MultiRepoService = req.app.locals.multiRepoService;
-    const { repoId } = req.params;
-    const { worktreePath } = req.body;
-
-    if (!worktreePath) {
-      return res.status(400).json({ error: 'worktreePath is required' });
-    }
-
-    const result = await service.cleanupOrphan(repoId, worktreePath);
-
-    if (!result.success) {
-      return res.status(409).json({
-        error: result.error,
-        cleanupFailed: true,
-      });
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error cleaning up orphan:', error);
-    res.status(500).json({
-      error: error instanceof Error ? error.message : 'Failed to cleanup orphan',
-    });
-  }
-});

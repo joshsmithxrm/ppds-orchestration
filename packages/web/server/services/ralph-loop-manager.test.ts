@@ -78,6 +78,7 @@ describe('RalphLoopManager', () => {
     mockMultiRepoService = {
       getSession: vi.fn(),
       spawn: vi.fn(),
+      getWorkerStatus: vi.fn().mockResolvedValue({ running: true }), // Default: worker running
     };
 
     mockCentralConfig = {
@@ -658,12 +659,14 @@ describe('RalphLoopManager', () => {
       expect(state.lastChecked).toBe(initialChecked);
     });
 
-    it('should trigger handleIterationComplete when session status is complete', async () => {
-      // Set targetIterations to 1 so we get loop_done instead of waiting for next iteration
-      const singleIterConfig: CentralConfig = {
+    it('should trigger iteration_end when worker stops with progress', async () => {
+      // With the new worker-stop-triggered design, we need:
+      // 1. Worker to stop (running: false)
+      // 2. Progress in the plan file (completed tasks > lastCompletedTaskCount)
+      const noGitConfig: CentralConfig = {
         ...mockCentralConfig,
         ralph: createRalphConfig({
-          maxIterations: 1,
+          maxIterations: 10,
           gitOperations: {
             commitAfterEach: false,
             pushAfterEach: false,
@@ -671,23 +674,37 @@ describe('RalphLoopManager', () => {
           },
         }),
       };
-      const singleIterManager = new RalphLoopManager(
+      const testManager = new RalphLoopManager(
         mockMultiRepoService as MultiRepoService,
-        singleIterConfig
+        noGitConfig
       );
 
-      const mockSession = createMockSession({ status: 'complete' });
+      // Create plan file with one completed task and one remaining
+      // This ensures checkPromise returns false (not all done) so we get iteration_end
+      const planContent = `# Implementation Plan
+### Task 0: First task
+- [x] **Description**: First task done
+
+### Task 1: Second task
+- [ ] **Description**: Second task pending
+`;
+      fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+
+      // Session with spawnId so we can check worker status
+      const mockSession = createMockSession({ status: 'working', spawnId: 'test-spawn-id' });
       vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+      // Worker has stopped
+      vi.mocked(mockMultiRepoService.getWorkerStatus!).mockResolvedValue({ running: false });
 
       const callback = vi.fn();
-      singleIterManager.onEvent(callback);
+      testManager.onEvent(callback);
 
-      await singleIterManager.startLoop('test-repo', '1');
+      await testManager.startLoop('test-repo', '1');
       callback.mockClear();
 
       await vi.advanceTimersByTimeAsync(5000);
 
-      // iteration_end should be emitted when session completes
+      // iteration_end should be emitted when worker stops with progress
       expect(callback).toHaveBeenCalledWith(
         'iteration_end',
         expect.objectContaining({
@@ -696,15 +713,19 @@ describe('RalphLoopManager', () => {
         })
       );
 
-      singleIterManager.stopLoop('test-repo', '1');
+      testManager.stopLoop('test-repo', '1');
     });
 
-    it('should handle loop stuck when session is stuck', async () => {
+    it('should handle loop stuck when session is stuck (fallback behavior)', async () => {
+      // With worker-stop-triggered design, stuck is a fallback when worker is still running
       const mockSession = createMockSession({
         status: 'stuck',
         stuckReason: 'Test stuck reason',
+        spawnId: 'test-spawn-id',
       });
       vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+      // Worker is STILL running (hasn't exited yet) - so we check fallback status
+      vi.mocked(mockMultiRepoService.getWorkerStatus!).mockResolvedValue({ running: true });
 
       const callback = vi.fn();
       noGitManager.onEvent(callback);
@@ -718,9 +739,12 @@ describe('RalphLoopManager', () => {
       expect(state.state).toBe('stuck');
     });
 
-    it('should stop loop when session is cancelled', async () => {
-      const mockSession = createMockSession({ status: 'cancelled' });
+    it('should stop loop when session is cancelled (fallback behavior)', async () => {
+      // With worker-stop-triggered design, cancelled is a fallback when worker is still running
+      const mockSession = createMockSession({ status: 'cancelled', spawnId: 'test-spawn-id' });
       vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+      // Worker is STILL running - so we check fallback status
+      vi.mocked(mockMultiRepoService.getWorkerStatus!).mockResolvedValue({ running: true });
 
       await noGitManager.startLoop('test-repo', '1');
 
@@ -774,8 +798,10 @@ describe('RalphLoopManager', () => {
         configWithStatusSignal
       );
 
-      const mockSession = createMockSession({ status: 'pr_ready' });
+      // Session with spawnId and worker still running so we reach done signal check
+      const mockSession = createMockSession({ status: 'pr_ready', spawnId: 'test-spawn-id' });
       vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+      vi.mocked(mockMultiRepoService.getWorkerStatus!).mockResolvedValue({ running: true });
 
       const callback = vi.fn();
       statusManager.onEvent(callback);
@@ -812,11 +838,14 @@ describe('RalphLoopManager', () => {
       fsActual.mkdirSync(doneDir, { recursive: true });
       fsActual.writeFileSync(path.join(doneDir, '.ralph-done'), 'done');
 
+      // Session with spawnId and worker still running so we reach done signal check
       const mockSession = createMockSession({
         status: 'working',
         worktreePath: tempDir,
+        spawnId: 'test-spawn-id',
       });
       vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+      vi.mocked(mockMultiRepoService.getWorkerStatus!).mockResolvedValue({ running: true });
 
       const callback = vi.fn();
       noGitManager.onEvent(callback);

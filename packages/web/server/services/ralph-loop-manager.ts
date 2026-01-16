@@ -8,6 +8,7 @@ import {
   getRepoEffectiveConfig,
   CentralConfig,
   isPromiseMet,
+  parsePlanFile,
   invokeReviewAgent,
   notifyReviewStuck,
   notifyPRReady,
@@ -70,6 +71,10 @@ export interface RalphLoopState {
   reviewCycle: number;
   /** Last review verdict received */
   lastReviewVerdict?: ReviewVerdict;
+  /** Number of completed tasks at start of current iteration (for progress detection) */
+  lastCompletedTaskCount?: number;
+  /** Number of failed iterations (no progress made) - counts against maxIterations */
+  failedIterations?: number;
 }
 
 /**
@@ -200,6 +205,8 @@ export class RalphLoopManager {
 
   /**
    * Poll all active loops for status changes.
+   * Primary detection: worker stopped (via /exit or process exit)
+   * Fallback: session status changes
    */
   private async poll(): Promise<void> {
     for (const [key, state] of this.loops) {
@@ -219,28 +226,22 @@ export class RalphLoopManager {
 
         state.lastChecked = new Date().toISOString();
 
-        // Check if promise is met (early exit)
-        if (await this.checkPromise(state, session)) {
-          await this.handlePromiseMet(state, session.worktreePath);
+        // PRIMARY: Check if worker has stopped (via /exit or process exit)
+        // This is the main detection mechanism - worker runs, exits, we evaluate
+        const workerStatus = await this.getWorkerStatus(state, session);
+        if (!workerStatus.running) {
+          await this.handleWorkerStopped(state, session);
           continue;
         }
 
-        // Check if done signal detected
+        // FALLBACK: Check if done signal file was created
         if (await this.checkDoneSignal(state, session)) {
           await this.handleLoopDone(state, 'done_signal', session.worktreePath);
           continue;
         }
 
-        // Check if session is complete or stuck
-        if (session.status === 'complete') {
-          // Worker marked itself complete - check if really done
-          if (await this.checkDoneSignal(state, session)) {
-            await this.handleLoopDone(state, 'status_complete', session.worktreePath);
-          } else {
-            // Not done, start next iteration
-            await this.handleIterationComplete(state, session);
-          }
-        } else if (session.status === 'stuck') {
+        // FALLBACK: Check session status for stuck/cancelled
+        if (session.status === 'stuck') {
           this.handleLoopStuck(state, session.stuckReason ?? 'Worker got stuck');
         } else if (session.status === 'cancelled') {
           this.stopLoop(state.repoId, state.sessionId);
@@ -249,6 +250,24 @@ export class RalphLoopManager {
       } catch (error) {
         console.error(`Error polling loop ${key}:`, error);
       }
+    }
+  }
+
+  /**
+   * Get the number of completed tasks from the plan file.
+   */
+  private getCompletedTaskCount(state: RalphLoopState, worktreePath: string): number {
+    const { promise } = state.config;
+    if (promise.type !== 'plan_complete') return 0;
+
+    const planPath = path.join(worktreePath, promise.value);
+    try {
+      if (!fs.existsSync(planPath)) return 0;
+      const content = fs.readFileSync(planPath, 'utf-8');
+      const { summary } = parsePlanFile(content);
+      return summary.complete;
+    } catch {
+      return 0;
     }
   }
 
@@ -355,6 +374,9 @@ export class RalphLoopManager {
     currentIteration.exitType = 'clean';
     currentIteration.statusAtEnd = session.status;
 
+    // Update completed task count for next iteration's progress detection
+    state.lastCompletedTaskCount = this.getCompletedTaskCount(state, session.worktreePath);
+
     // Perform git operations (commit/push) after iteration completes
     await this.performGitOperations(state, session.worktreePath);
 
@@ -399,6 +421,88 @@ export class RalphLoopManager {
     } catch (error) {
       console.error('Failed to re-spawn worker:', error);
       this.handleLoopStuck(state, `Failed to re-spawn: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Handle worker stopped event.
+   * Called when poll detects worker is no longer running.
+   * Evaluates task progress and decides: review, respawn, or count failure.
+   */
+  private async handleWorkerStopped(
+    state: RalphLoopState,
+    session: SessionState
+  ): Promise<void> {
+    const completedCount = this.getCompletedTaskCount(state, session.worktreePath);
+    const previousCount = state.lastCompletedTaskCount ?? 0;
+    const progress = completedCount - previousCount;
+
+    // Update tracking
+    state.lastCompletedTaskCount = completedCount;
+
+    // Mark current iteration as ended
+    const currentIteration = state.iterations[state.iterations.length - 1];
+    if (currentIteration) {
+      currentIteration.endedAt = new Date().toISOString();
+      currentIteration.exitType = progress > 0 ? 'clean' : 'abnormal';
+      currentIteration.statusAtEnd = session.status;
+    }
+
+    // Check if ALL tasks done (promise met)
+    if (await this.checkPromise(state, session)) {
+      console.log(`Ralph: All tasks complete for ${state.repoId}/${state.sessionId}, entering review`);
+      await this.handlePromiseMet(state, session.worktreePath);
+      return;
+    }
+
+    // Check if progress was made
+    if (progress > 0) {
+      // Success iteration - respawn without counting against max
+      console.log(`Ralph: Task completed (${previousCount} → ${completedCount}) for ${state.repoId}/${state.sessionId}, respawning`);
+      await this.performGitOperations(state, session.worktreePath);
+      this.emit('iteration_end', state);
+
+      // Wait and spawn next iteration
+      state.state = 'waiting';
+      setTimeout(() => {
+        this.startNextIteration(state);
+      }, state.config.iterationDelayMs);
+      return;
+    }
+
+    // No progress - count as failure
+    state.failedIterations = (state.failedIterations ?? 0) + 1;
+    console.log(`Ralph: No progress for ${state.repoId}/${state.sessionId}, failure ${state.failedIterations}/${state.config.maxIterations}`);
+
+    if (state.failedIterations >= state.config.maxIterations) {
+      this.handleLoopStuck(state, `Max failed iterations (${state.config.maxIterations}) reached without progress`);
+      return;
+    }
+
+    // Respawn to try again
+    state.state = 'waiting';
+    setTimeout(() => {
+      this.startNextIteration(state);
+    }, state.config.iterationDelayMs);
+  }
+
+  /**
+   * Get worker status from spawner via MultiRepoService.
+   */
+  private async getWorkerStatus(
+    state: RalphLoopState,
+    session: SessionState
+  ): Promise<{ running: boolean }> {
+    if (!session.spawnId) {
+      // No spawnId means worker was never spawned or is legacy
+      return { running: false };
+    }
+
+    try {
+      return await this.multiRepoService.getWorkerStatus(state.repoId, session.spawnId);
+    } catch (error) {
+      console.warn(`Failed to get worker status: ${(error as Error).message}`);
+      return { running: false };
     }
   }
 
