@@ -205,17 +205,7 @@ export function useTerminal(options: UseTerminalOptions): UseTerminalReturn {
           console.log('[Terminal] Data for', message.sessionId?.slice(0, 8), 'our session:', sessionId.slice(0, 8), 'match:', message.sessionId === sessionId, 'terminal:', !!terminalRef.current);
           if (message.sessionId === sessionId && terminalRef.current) {
             console.log('[Terminal] Writing', message.data.length, 'bytes to terminal');
-            const term = terminalRef.current;
-            // Check if user is at/near bottom before writing (within 5 rows)
-            const buffer = term.buffer.active;
-            const atBottom = buffer.viewportY >= buffer.baseY - 5;
-
-            term.write(message.data);
-
-            // Only auto-scroll if user was already at bottom
-            if (atBottom) {
-              term.scrollToBottom();
-            }
+            terminalRef.current.write(message.data);
           }
           break;
 
