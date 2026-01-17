@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { WorkerSpawner, SpawnResult, SpawnInfo, WorkerStatus } from './worker-spawner.js';
 import { WorkerSpawnRequest } from '../session/types.js';
-import { getSharedPtyManager } from '../pty/pty-manager.js';
+import { getSharedPtyManager, PtyManager } from '../pty/pty-manager.js';
 
 /**
  * Headless worker spawner for Windows.
@@ -239,6 +239,7 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
   /**
    * Spawns a worker with PTY for interactive terminal access.
    * Opens Claude without prompt, then sends the prompt via PTY stdin to avoid truncation.
+   * Uses intelligent readiness detection instead of arbitrary waits.
    */
   private async spawnWithPty(
     spawnId: string,
@@ -247,8 +248,11 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
     logPath: string
   ): Promise<SpawnResult> {
     const ptyManager = getSharedPtyManager();
+    const shortId = spawnId.slice(0, 8);
 
     try {
+      console.log(`[PTY:${shortId}] Creating PTY session...`);
+
       // Spawn Claude via cmd.exe to resolve PATH (node-pty doesn't resolve PATH)
       // Start without prompt - we'll send it via PTY stdin after Claude is ready
       // --dangerously-skip-permissions for autonomous operation
@@ -264,27 +268,52 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
 
       // Track this as a PTY spawn
       this.ptySpawns.add(spawnId);
+      console.log(`[PTY:${shortId}] Session created, waiting for Claude to be ready...`);
 
-      // Wait for Claude to initialize before sending prompt
-      // Claude needs time to start and show its prompt
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait for Claude Code to be ready by watching for the prompt character
+      const ready = await this.waitForClaudeReady(ptyManager, spawnId, 15000);
+      if (!ready) {
+        console.error(`[PTY:${shortId}] Claude did not become ready within timeout`);
+        // Kill PTY and fail - Ralph loop will retry
+        ptyManager.kill(spawnId);
+        this.ptySpawns.delete(spawnId);
+        return {
+          success: false,
+          spawnId,
+          spawnedAt,
+          error: 'Claude Code did not become ready within timeout (15s)',
+        };
+      }
+      console.log(`[PTY:${shortId}] Claude is ready, waiting 500ms for UI to settle...`);
+
+      // Longer delay for UI to fully settle after detecting readiness
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // Send the prompt via PTY stdin (avoids command-line length limits)
       // This simulates the user typing the prompt after Claude opens
+      console.log(`[PTY:${shortId}] Writing prompt (${request.promptContent.length} chars)...`);
       ptyManager.write(spawnId, request.promptContent);
 
-      // Small delay to ensure prompt is fully written before pressing Enter
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Wait for Claude to receive and buffer the prompt text
+      // PTY input doesn't always generate output, so quiescence isn't reliable
+      // Use a fixed delay based on prompt length (longer prompts need more time)
+      const promptDelay = Math.max(1000, Math.min(3000, request.promptContent.length * 2));
+      console.log(`[PTY:${shortId}] Waiting ${promptDelay}ms for prompt to be buffered...`);
+      await new Promise(resolve => setTimeout(resolve, promptDelay));
 
-      // Press Enter to submit the prompt (use \r\n for Windows compatibility)
+      // Press Enter to submit the prompt
+      // Windows ConPTY with Claude Code's Ink TUI expects CRLF for line submission
+      console.log(`[PTY:${shortId}] Sending Enter to submit prompt...`);
       ptyManager.write(spawnId, '\r\n');
 
+      console.log(`[PTY:${shortId}] Spawn complete, prompt submitted`);
       return {
         success: true,
         spawnId,
         spawnedAt,
       };
     } catch (error) {
+      console.error(`[PTY:${shortId}] Spawn error:`, error);
       return {
         success: false,
         spawnId,
@@ -292,6 +321,101 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
         error: `Failed to spawn PTY: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
+  }
+
+  /**
+   * Waits for Claude Code to be ready by watching PTY output for the prompt character.
+   * Returns true if ready, false if timeout.
+   */
+  private waitForClaudeReady(
+    ptyManager: PtyManager,
+    spawnId: string,
+    timeoutMs: number
+  ): Promise<boolean> {
+    const shortId = spawnId.slice(0, 8);
+    return new Promise((resolve) => {
+      let outputBuffer = '';
+      let resolved = false;
+
+      const cleanup = ptyManager.onData((sessionId, data) => {
+        if (sessionId !== spawnId || resolved) return;
+
+        outputBuffer += data;
+        // Claude Code shows '❯' prompt character when ready for input
+        if (outputBuffer.includes('❯')) {
+          resolved = true;
+          cleanup();
+          console.log(`[PTY:${shortId}] Detected ❯ prompt - Claude is ready`);
+          resolve(true);
+        }
+      });
+
+      // Timeout fallback
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          console.warn(`[PTY:${shortId}] Readiness timeout (${timeoutMs}ms) - last output: ${outputBuffer.slice(-200)}`);
+          resolve(false);
+        }
+      }, timeoutMs);
+    });
+  }
+
+  /**
+   * Waits for PTY output to become quiet (no significant output for quietMs).
+   * Used to ensure prompt is fully rendered before pressing Enter.
+   *
+   * @param quietMs - How long of no significant output before considering it quiet
+   * @param minBytes - Minimum bytes to consider as "significant" output (filters cursor blink)
+   */
+  private waitForOutputQuiescence(
+    ptyManager: PtyManager,
+    spawnId: string,
+    quietMs: number,
+    minBytes: number = 50
+  ): Promise<void> {
+    const shortId = spawnId.slice(0, 8);
+    return new Promise((resolve) => {
+      let timer: NodeJS.Timeout;
+      let resolved = false;
+      let significantOutputCount = 0;
+
+      const resetTimer = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            cleanup();
+            console.log(`[PTY:${shortId}] Quiescence achieved after ${significantOutputCount} significant outputs`);
+            resolve();
+          }
+        }, quietMs);
+      };
+
+      const cleanup = ptyManager.onData((sessionId, data) => {
+        if (sessionId !== spawnId || resolved) return;
+        // Only reset timer for significant output (not cursor blink)
+        if (data.length >= minBytes) {
+          significantOutputCount++;
+          resetTimer();
+        }
+      });
+
+      // Start the quiescence timer
+      resetTimer();
+
+      // Max wait of 3 seconds (reduced from 5s)
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          clearTimeout(timer);
+          console.log(`[PTY:${shortId}] Quiescence timeout (3s), proceeding anyway`);
+          resolve();
+        }
+      }, 3000);
+    });
   }
 
   /**
