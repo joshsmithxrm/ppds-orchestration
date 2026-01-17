@@ -302,9 +302,8 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
       await new Promise(resolve => setTimeout(resolve, promptDelay));
 
       // Press Enter to submit the prompt
-      // Windows ConPTY with Claude Code's Ink TUI expects CRLF for line submission
       console.log(`[PTY:${shortId}] Sending Enter to submit prompt...`);
-      ptyManager.write(spawnId, '\r\n');
+      ptyManager.write(spawnId, '\r');
 
       console.log(`[PTY:${shortId}] Spawn complete, prompt submitted`);
       return {
