@@ -47,9 +47,10 @@ interface RalphLoopState {
 interface RalphStatusProps {
   repoId: string;
   sessionId: string;
+  compact?: boolean;
 }
 
-function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
+function RalphStatus({ repoId, sessionId, compact = false }: RalphStatusProps) {
   const [state, setState] = useState<RalphLoopState | null>(null);
   const [loading, setLoading] = useState(true);
   const [continuing, setContinuing] = useState(false);
@@ -124,7 +125,9 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
   };
 
   if (loading) {
-    return (
+    return compact ? (
+      <p className="text-gray-400 text-sm">Loading...</p>
+    ) : (
       <div className="bg-ppds-card rounded-lg p-4">
         <h3 className="text-lg font-semibold text-white mb-2">Ralph Loop</h3>
         <p className="text-gray-400">Loading...</p>
@@ -133,7 +136,18 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
   }
 
   if (!state) {
-    return (
+    return compact ? (
+      <div className="flex items-center justify-between">
+        <p className="text-gray-400 text-sm">No active Ralph loop</p>
+        <button
+          onClick={handleStart}
+          disabled={starting}
+          className="px-3 py-1 bg-ppds-ralph text-white rounded hover:bg-ppds-ralph/80 text-xs disabled:opacity-50"
+        >
+          {starting ? 'Starting...' : 'Start'}
+        </button>
+      </div>
+    ) : (
       <div className="bg-ppds-card rounded-lg p-4">
         <h3 className="text-lg font-semibold text-white mb-2">Ralph Loop</h3>
         <p className="text-gray-400 mb-3">No active Ralph loop for this session.</p>
@@ -151,6 +165,38 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
   const progressPercent = Math.round(
     (state.currentIteration / state.config.maxIterations) * 100
   );
+
+  // Compact view for collapsible panel
+  if (compact) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-300">
+            Iteration {state.currentIteration}/{state.config.maxIterations}
+          </span>
+          <span className={`text-sm ${statusTextColors[state.state] || 'text-ppds-muted'}`}>
+            {statusLabels[state.state] || state.state}
+          </span>
+        </div>
+        <div className="w-full bg-ppds-surface rounded-full h-1.5 overflow-hidden">
+          <div
+            className="bg-ppds-ralph h-1.5 rounded-full transition-all duration-300"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+        {state.state === 'waiting' && (
+          <button
+            onClick={handleContinue}
+            disabled={continuing}
+            className="w-full px-3 py-1 bg-ppds-ralph text-white rounded text-sm hover:bg-ppds-ralph/80 disabled:opacity-50"
+          >
+            {continuing ? 'Continuing...' : 'Continue'}
+          </button>
+        )}
+        {error && <p className="text-red-400 text-xs">{error}</p>}
+      </div>
+    );
+  }
 
   return (
     <div className="bg-ppds-card rounded-lg p-4 space-y-4">

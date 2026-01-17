@@ -6,7 +6,7 @@
       "repo": "ppds-orchestration"
     },
     "worktreeRoot": "..",
-    "worktreePrefix": "ppds-orchestration-issue-",
+    "worktreePrefix": "ppds-orchestration-",
     "baseBranch": "origin/main"
   },
   "worker": {

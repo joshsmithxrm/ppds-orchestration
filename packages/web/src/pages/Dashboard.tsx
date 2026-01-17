@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import SpawnDialog from '../components/SpawnDialog';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useSoundsContext, useConfigContext } from '../App';
@@ -72,6 +72,7 @@ function Dashboard() {
   const prevSessionsRef = useRef<Map<string, string>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptRef = useRef(0);
+  const navigate = useNavigate();
 
   // Map session status to filter category
   const getSessionCategory = (status: string): FilterCategory | null => {
@@ -277,7 +278,12 @@ function Dashboard() {
       throw new Error(data.error || 'Failed to spawn worker');
     }
 
-    // Session will be added via WebSocket event
+    // Navigate to the first spawned session
+    const data = await res.json();
+    if (data.sessions && data.sessions.length > 0) {
+      const firstSession = data.sessions[0];
+      navigate(`/session/${repoId}/${firstSession.id}`);
+    }
   };
 
   const handleDismissClick = (repoId: string, sessionId: string, e: React.MouseEvent) => {

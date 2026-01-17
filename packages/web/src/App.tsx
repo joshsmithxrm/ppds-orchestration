@@ -49,7 +49,7 @@ function App() {
       <div className="min-h-screen bg-ppds-bg">
         <header className="bg-ppds-header border-b border-gray-800 relative">
           <Link to="/" className="block py-6 hover:opacity-90 transition-opacity">
-            <img src="/ppds-banner.png" alt="PPDS" className="max-w-md mx-auto" />
+            <img src="/orchestrator-banner.png" alt="Orchestrator" className="max-w-md mx-auto" />
             <div className="text-center text-ppds-accent text-sm font-medium mt-3">Orchestration Hub</div>
           </Link>
           <div className="absolute bottom-3 right-4 flex items-center gap-3">

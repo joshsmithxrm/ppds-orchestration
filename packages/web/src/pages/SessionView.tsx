@@ -36,6 +36,8 @@ interface ForceDeleteDialogState {
   error?: string;
 }
 
+type PanelType = 'details' | 'git' | 'ralph';
+
 function SessionView() {
   const { repoId, sessionId } = useParams<{
     repoId: string;
@@ -51,6 +53,7 @@ function SessionView() {
   const [actionLoading, setActionLoading] = useState<'pause' | 'resume' | null>(null);
   const [retryingDelete, setRetryingDelete] = useState(false);
   const [rollingBack, setRollingBack] = useState(false);
+  const [expandedPanel, setExpandedPanel] = useState<PanelType | null>(null);
 
   useEffect(() => {
     if (deleted) return; // Stop polling after deletion
@@ -160,6 +163,10 @@ function SessionView() {
     }
   };
 
+  const togglePanel = (panel: PanelType) => {
+    setExpandedPanel(expandedPanel === panel ? null : panel);
+  };
+
   if (loading) {
     return <div className="text-ppds-muted">Loading...</div>;
   }
@@ -175,186 +182,225 @@ function SessionView() {
     );
   }
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Link to="/" className="text-ppds-muted hover:text-white">
-          &larr; Back
-        </Link>
-        <h1 className="text-2xl font-bold text-white">
-          {session.repoId} #{session.issueNumber}
-        </h1>
-        <span
-          className={`px-2 py-1 rounded text-sm ${
-            session.status === 'stuck'
-              ? 'bg-red-500'
-              : session.status === 'complete'
-              ? 'bg-green-500'
-              : 'bg-blue-500'
-          }`}
-        >
-          {session.status}
-        </span>
-        {session.mode === 'autonomous' && (
-          <span className="px-2 py-1 rounded text-sm bg-ppds-ralph">Autonomous</span>
-        )}
-      </div>
+  const statusColor =
+    session.status === 'stuck'
+      ? 'bg-red-500'
+      : session.status === 'complete'
+      ? 'bg-green-500'
+      : 'bg-blue-500';
 
-      {/* Info Grid */}
-      <div className="grid grid-cols-2 gap-6">
-        <div className="bg-ppds-card rounded-lg p-4 space-y-3">
-          <h2 className="text-lg font-semibold text-white">Details</h2>
-          <div>
-            <div className="text-sm text-ppds-muted">Issue Title</div>
-            <div className="text-white">{session.issueTitle}</div>
-          </div>
-          <div>
-            <div className="text-sm text-ppds-muted">Branch</div>
-            <div className="font-mono text-sm text-cyan-400">
-              {session.branch}
-            </div>
-          </div>
-          <div>
-            <div className="text-sm text-ppds-muted">Worktree</div>
-            <div className="font-mono text-xs text-gray-300">
-              {session.worktreePath}
-            </div>
-          </div>
-          {session.pullRequestUrl && (
-            <div>
-              <div className="text-sm text-ppds-muted">Pull Request</div>
-              <a
-                href={session.pullRequestUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-400 hover:underline"
-              >
-                {session.pullRequestUrl}
-              </a>
-            </div>
+  return (
+    <div className="flex flex-col h-[calc(100vh-180px)]">
+      {/* Compact Header */}
+      <div className="flex items-center justify-between gap-4 pb-3 border-b border-gray-700 flex-shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <Link to="/" className="text-ppds-muted hover:text-white flex-shrink-0">
+            &larr;
+          </Link>
+          <h1 className="text-lg font-semibold text-white truncate">
+            {session.repoId} #{session.issueNumber}
+          </h1>
+          <span className={`px-2 py-0.5 rounded text-xs flex-shrink-0 ${statusColor}`}>
+            {session.status}
+          </span>
+          {session.mode === 'autonomous' && (
+            <span className="px-2 py-0.5 rounded text-xs bg-ppds-ralph flex-shrink-0">Auto</span>
           )}
+          <span className="text-xs text-ppds-muted font-mono truncate hidden sm:block">
+            {session.branch}
+          </span>
         </div>
 
-        <div className="bg-ppds-card rounded-lg p-4 space-y-3">
-          <h2 className="text-lg font-semibold text-white">Git Status</h2>
-          {session.worktreeStatus ? (
+        {/* Header Actions */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {session.status === 'deletion_failed' ? (
             <>
-              <div className="flex gap-4 text-sm">
-                <span className="text-green-400">
-                  +{session.worktreeStatus.insertions}
-                </span>
-                <span className="text-red-400">
-                  -{session.worktreeStatus.deletions}
-                </span>
-                <span className="text-ppds-muted">
-                  {session.worktreeStatus.filesChanged} files
-                </span>
-              </div>
-              {session.worktreeStatus.lastCommitMessage && (
-                <div className="text-sm text-gray-300">
-                  Last commit: {session.worktreeStatus.lastCommitMessage}
-                </div>
-              )}
-              {session.worktreeStatus.changedFiles.length > 0 && (
-                <div className="text-xs font-mono text-ppds-muted space-y-1">
-                  {session.worktreeStatus.changedFiles.slice(0, 5).map((f) => (
-                    <div key={f}>{f}</div>
-                  ))}
-                  {session.worktreeStatus.changedFiles.length > 5 && (
-                    <div>
-                      ...and {session.worktreeStatus.changedFiles.length - 5}{' '}
-                      more
-                    </div>
-                  )}
-                </div>
-              )}
+              <button
+                onClick={handleRetryDelete}
+                disabled={retryingDelete || rollingBack}
+                className="px-3 py-1 text-sm bg-orange-600 text-white rounded hover:bg-orange-500 disabled:opacity-50"
+              >
+                {retryingDelete ? '...' : 'Retry'}
+              </button>
+              <button
+                onClick={handleRollbackDelete}
+                disabled={retryingDelete || rollingBack}
+                className="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-500 disabled:opacity-50"
+              >
+                {rollingBack ? '...' : 'Cancel'}
+              </button>
             </>
           ) : (
-            <div className="text-ppds-muted">No changes yet</div>
+            <>
+              {session.status === 'paused' ? (
+                <button
+                  onClick={() => handleAction('resume')}
+                  disabled={actionLoading !== null}
+                  className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-500 disabled:opacity-50"
+                  title="Resume"
+                >
+                  {actionLoading === 'resume' ? '...' : 'Resume'}
+                </button>
+              ) : session.status !== 'deleting' && (
+                <button
+                  onClick={() => handleAction('pause')}
+                  disabled={actionLoading !== null}
+                  className="px-3 py-1 text-sm bg-yellow-600 text-white rounded hover:bg-yellow-500 disabled:opacity-50"
+                  title="Pause"
+                >
+                  {actionLoading === 'pause' ? '...' : 'Pause'}
+                </button>
+              )}
+              {session.status !== 'deleting' ? (
+                <button
+                  onClick={() => setDeleteDialogOpen(true)}
+                  disabled={actionLoading !== null}
+                  className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-500 disabled:opacity-50"
+                  title="Delete"
+                >
+                  Delete
+                </button>
+              ) : (
+                <span className="px-3 py-1 text-sm bg-orange-600 text-white rounded opacity-75">
+                  Deleting...
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      {/* Autonomous Status (for autonomous mode sessions) */}
-      {session.mode === 'autonomous' && (
-        <RalphStatus repoId={repoId!} sessionId={sessionId!} />
-      )}
-
-      {/* Live Terminal (when spawnId is available) */}
-      {session.spawnId && (
-        <div className="bg-ppds-card rounded-lg p-4">
-          <h2 className="text-lg font-semibold text-white mb-3">
-            Live Terminal
-          </h2>
-          <Terminal
-            sessionId={session.spawnId}
-            className="h-96"
-          />
-        </div>
-      )}
-
-      {/* Stuck Reason */}
+      {/* Stuck Reason Alert - shows at top if stuck */}
       {session.stuckReason && (
-        <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">
-          <h3 className="text-red-400 font-semibold">Stuck Reason</h3>
-          <p className="text-red-300">{session.stuckReason}</p>
+        <div className="bg-red-900/30 border border-red-700 rounded px-3 py-2 mt-3 flex-shrink-0">
+          <span className="text-red-400 font-medium text-sm">Stuck: </span>
+          <span className="text-red-300 text-sm">{session.stuckReason}</span>
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex gap-3">
-        {session.status === 'deletion_failed' ? (
-          <>
-            <button
-              onClick={handleRetryDelete}
-              disabled={retryingDelete || rollingBack}
-              className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {retryingDelete ? 'Retrying...' : 'Retry Delete'}
-            </button>
-            <button
-              onClick={handleRollbackDelete}
-              disabled={retryingDelete || rollingBack}
-              className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {rollingBack ? 'Rolling Back...' : 'Cancel Delete'}
-            </button>
-          </>
-        ) : (
-          <>
-            {session.status === 'paused' ? (
-              <button
-                onClick={() => handleAction('resume')}
-                disabled={actionLoading !== null}
-                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {actionLoading === 'resume' ? 'Resuming...' : 'Resume'}
-              </button>
-            ) : session.status !== 'deleting' && (
-              <button
-                onClick={() => handleAction('pause')}
-                disabled={actionLoading !== null}
-                className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {actionLoading === 'pause' ? 'Pausing...' : 'Pause'}
-              </button>
-            )}
-            {session.status !== 'deleting' && (
-              <button
-                onClick={() => setDeleteDialogOpen(true)}
-                disabled={actionLoading !== null}
-                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Delete
-              </button>
-            )}
-            {session.status === 'deleting' && (
-              <span className="px-4 py-2 bg-orange-600 text-white rounded opacity-75">
-                Deleting...
+      {/* Terminal - fills available space */}
+      {session.spawnId ? (
+        <div className="flex-1 min-h-0 mt-3 bg-ppds-card rounded-lg overflow-hidden">
+          <Terminal sessionId={session.spawnId} className="h-full" />
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 mt-3 bg-ppds-card rounded-lg flex items-center justify-center">
+          <span className="text-ppds-muted">Waiting for terminal connection...</span>
+        </div>
+      )}
+
+      {/* Collapsible Panels Footer */}
+      <div className="flex-shrink-0 mt-3 space-y-2">
+        {/* Panel Toggle Buttons */}
+        <div className="flex gap-2 text-sm">
+          <button
+            onClick={() => togglePanel('details')}
+            className={`px-3 py-1.5 rounded transition-colors ${
+              expandedPanel === 'details'
+                ? 'bg-ppds-accent text-ppds-bg'
+                : 'bg-ppds-card text-ppds-muted hover:text-white'
+            }`}
+          >
+            {expandedPanel === 'details' ? '- Details' : '+ Details'}
+          </button>
+          <button
+            onClick={() => togglePanel('git')}
+            className={`px-3 py-1.5 rounded transition-colors ${
+              expandedPanel === 'git'
+                ? 'bg-ppds-accent text-ppds-bg'
+                : 'bg-ppds-card text-ppds-muted hover:text-white'
+            }`}
+          >
+            {expandedPanel === 'git' ? '- Git' : '+ Git'}
+            {session.worktreeStatus && (
+              <span className="ml-1 text-xs">
+                <span className="text-green-400">+{session.worktreeStatus.insertions}</span>
+                <span className="text-red-400 ml-1">-{session.worktreeStatus.deletions}</span>
               </span>
             )}
-          </>
+          </button>
+          {session.mode === 'autonomous' && (
+            <button
+              onClick={() => togglePanel('ralph')}
+              className={`px-3 py-1.5 rounded transition-colors ${
+                expandedPanel === 'ralph'
+                  ? 'bg-ppds-ralph text-white'
+                  : 'bg-ppds-card text-ppds-muted hover:text-white'
+              }`}
+            >
+              {expandedPanel === 'ralph' ? '- Ralph' : '+ Ralph'}
+            </button>
+          )}
+        </div>
+
+        {/* Expanded Panel Content */}
+        {expandedPanel === 'details' && (
+          <div className="bg-ppds-card rounded-lg p-4 space-y-2">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="text-ppds-muted">Issue: </span>
+                <span className="text-white">{session.issueTitle}</span>
+              </div>
+              <div>
+                <span className="text-ppds-muted">Branch: </span>
+                <span className="font-mono text-cyan-400">{session.branch}</span>
+              </div>
+              <div className="col-span-2">
+                <span className="text-ppds-muted">Worktree: </span>
+                <span className="font-mono text-xs text-gray-300">{session.worktreePath}</span>
+              </div>
+              {session.pullRequestUrl && (
+                <div className="col-span-2">
+                  <span className="text-ppds-muted">PR: </span>
+                  <a
+                    href={session.pullRequestUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 hover:underline"
+                  >
+                    {session.pullRequestUrl}
+                  </a>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {expandedPanel === 'git' && (
+          <div className="bg-ppds-card rounded-lg p-4">
+            {session.worktreeStatus ? (
+              <div className="space-y-2">
+                <div className="flex gap-4 text-sm">
+                  <span className="text-green-400">+{session.worktreeStatus.insertions}</span>
+                  <span className="text-red-400">-{session.worktreeStatus.deletions}</span>
+                  <span className="text-ppds-muted">{session.worktreeStatus.filesChanged} files</span>
+                </div>
+                {session.worktreeStatus.lastCommitMessage && (
+                  <div className="text-sm text-gray-300">
+                    Last commit: {session.worktreeStatus.lastCommitMessage}
+                  </div>
+                )}
+                {session.worktreeStatus.changedFiles.length > 0 && (
+                  <div className="text-xs font-mono text-ppds-muted flex flex-wrap gap-2">
+                    {session.worktreeStatus.changedFiles.slice(0, 8).map((f) => (
+                      <span key={f} className="bg-ppds-bg px-1 rounded">{f}</span>
+                    ))}
+                    {session.worktreeStatus.changedFiles.length > 8 && (
+                      <span className="text-gray-500">+{session.worktreeStatus.changedFiles.length - 8} more</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-ppds-muted text-sm">No changes yet</div>
+            )}
+          </div>
+        )}
+
+        {expandedPanel === 'ralph' && session.mode === 'autonomous' && (
+          <div className="bg-ppds-card rounded-lg p-4">
+            <RalphStatus repoId={repoId!} sessionId={sessionId!} compact />
+          </div>
         )}
       </div>
 
