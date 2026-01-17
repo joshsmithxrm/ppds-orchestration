@@ -41,14 +41,20 @@ program
 program
   .command('spawn <issues...>')
   .description('Spawn a new worker for GitHub issue(s)')
-  .action(withErrorHandling(async (issues: string[]) => {
+  .option('--phase <phase>', 'Phase: planning (default) or building', 'planning')
+  .action(withErrorHandling(async (issues: string[], options: { phase?: string }) => {
     // Validate issue numbers
     const parsedIssues = issues.map(i => parseInt(i, 10));
     const invalidIssues = issues.filter((_, i) => Number.isNaN(parsedIssues[i]));
     if (invalidIssues.length > 0) {
       throw new Error(`Invalid issue number(s): ${invalidIssues.join(', ')}. Issue numbers must be numeric.`);
     }
-    await spawnCommand(parsedIssues);
+    // Validate phase
+    const phase = options.phase as 'planning' | 'building' | undefined;
+    if (phase && phase !== 'planning' && phase !== 'building') {
+      throw new Error(`Invalid phase '${phase}'. Must be 'planning' or 'building'.`);
+    }
+    await spawnCommand(parsedIssues, { phase });
   }));
 
 // list command

@@ -478,6 +478,27 @@ export class RalphLoopManager {
       return;
     }
 
+    // Handle "planning_complete" signal - transition from planning to building phase
+    if (signal === 'planning_complete') {
+      console.log(`Ralph: Worker signaled planning_complete for ${state.repoId}/${state.sessionId}, spawning build worker`);
+
+      // Update session status to planning_complete
+      // This is important because restart() checks this status to regenerate with autonomous mode
+      await this.multiRepoService.update(state.repoId, state.sessionId, 'planning_complete');
+
+      // Commit the plan file before spawning build worker
+      await this.performGitOperations(state, session.worktreePath);
+
+      this.emit('iteration_end', state);
+
+      // Wait and spawn build worker (restart will regenerate prompt with autonomous mode)
+      state.state = 'waiting';
+      setTimeout(() => {
+        this.startNextIteration(state);
+      }, state.config.iterationDelayMs);
+      return;
+    }
+
     // Handle "task_done" signal - respawn for next task
     if (signal === 'task_done') {
       console.log(`Ralph: Worker signaled task_done for ${state.repoId}/${state.sessionId}, respawning`);

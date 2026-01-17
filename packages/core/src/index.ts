@@ -6,6 +6,7 @@ export {
   SessionDynamicState,
   WorktreeStatus,
   ExecutionMode,
+  SessionPhase,
   DeletionMode,
   IssueRef,
   STALE_THRESHOLD_MS,

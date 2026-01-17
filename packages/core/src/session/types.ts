@@ -3,10 +3,19 @@ import { z } from 'zod';
 /**
  * Execution mode for a session.
  * - 'manual': User controls Claude interactively, no automation
- * - 'autonomous': Full loop: plan -> implement -> review -> iterate -> ship
+ * - 'autonomous': Full loop: implement -> review -> iterate -> ship (assumes plan exists)
+ * - 'planning': Worker explores codebase and creates IMPLEMENTATION_PLAN.md
  */
-export const ExecutionMode = z.enum(['manual', 'autonomous']);
+export const ExecutionMode = z.enum(['manual', 'autonomous', 'planning']);
 export type ExecutionMode = z.infer<typeof ExecutionMode>;
+
+/**
+ * Session phase for spawn operations.
+ * - 'planning': Worker creates IMPLEMENTATION_PLAN.md from SPEC.md
+ * - 'building': Worker implements tasks from existing plan
+ */
+export const SessionPhase = z.enum(['planning', 'building']);
+export type SessionPhase = z.infer<typeof SessionPhase>;
 
 /**
  * Deletion mode for session cleanup.

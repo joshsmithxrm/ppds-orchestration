@@ -10,6 +10,7 @@ import {
   WorktreeStatus,
   WorktreeState,
   ExecutionMode,
+  SessionPhase,
   DeletionMode,
   IssueRef,
   STALE_THRESHOLD_MS,
@@ -60,6 +61,8 @@ export interface SessionServiceConfig {
 export interface SpawnOptions {
   /** Execution mode: 'manual' (user-controlled) or 'autonomous' (full loop). Default: 'manual'. */
   mode?: ExecutionMode;
+  /** Session phase: 'planning' (creates IMPLEMENTATION_PLAN.md) or 'building' (implements tasks). Default: 'planning'. */
+  phase?: SessionPhase;
   /** Additional prompt sections to inject (from hooks). */
   additionalPromptSections?: string[];
 }
@@ -90,7 +93,13 @@ export class SessionService {
    */
   async spawn(issueNumber: number, options?: SpawnOptions): Promise<SessionState> {
     const sessionId = issueNumber.toString();
-    const mode = options?.mode ?? 'manual';
+    const phase = options?.phase ?? 'planning';
+
+    // Determine execution mode based on phase:
+    // - planning phase: uses 'planning' mode (worker explores and creates plan)
+    // - building phase: uses 'autonomous' mode (worker implements tasks)
+    // - If mode explicitly provided, use that instead
+    const mode: ExecutionMode = options?.mode ?? (phase === 'planning' ? 'planning' : 'autonomous');
 
     // Check for existing active session with this issue
     const allSessions = await this.store.listAll();
@@ -143,10 +152,22 @@ export class SessionService {
       this.config.baseBranch ?? 'origin/main'
     );
 
-    // Write issue body to IMPLEMENTATION_PLAN.md in worktree
-    // Worker reads full PRD/plan from this file, not from the prompt
-    const planPath = path.join(worktreePath, 'IMPLEMENTATION_PLAN.md');
-    await fs.promises.writeFile(planPath, issueData.body || '', 'utf-8');
+    // Write issue body to appropriate file based on phase:
+    // - Planning phase: Write to SPEC.md (worker reads this to create plan)
+    // - Building phase: Expect IMPLEMENTATION_PLAN.md already exists (from planning)
+    if (phase === 'planning') {
+      const specPath = path.join(worktreePath, 'SPEC.md');
+      await fs.promises.writeFile(specPath, issueData.body || '', 'utf-8');
+    } else {
+      // Building phase: Check that IMPLEMENTATION_PLAN.md exists
+      // (should have been created by planning worker)
+      const planPath = path.join(worktreePath, 'IMPLEMENTATION_PLAN.md');
+      if (!fs.existsSync(planPath)) {
+        // Fallback: write issue body to IMPLEMENTATION_PLAN.md for backwards compatibility
+        // This allows spawn --phase building to work even without a prior planning phase
+        await fs.promises.writeFile(planPath, issueData.body || '', 'utf-8');
+      }
+    }
 
     // Write worker prompt
     const promptPath = await this.writeWorkerPrompt(
@@ -214,10 +235,12 @@ export class SessionService {
       throw new Error(spawnResult.error ?? 'Failed to spawn worker');
     }
 
-    // Update to working status with spawnId for status tracking
+    // Update status based on phase:
+    // - Planning phase: status = 'planning' (worker is exploring and creating plan)
+    // - Building phase: status = 'working' (worker is implementing tasks)
     const updatedSession: SessionState = {
       ...session,
-      status: 'working',
+      status: phase === 'planning' ? 'planning' : 'working',
       lastHeartbeat: new Date().toISOString(),
       spawnId: spawnResult.spawnId,
     };
@@ -255,12 +278,33 @@ export class SessionService {
       throw new Error(`Worktree no longer exists at ${session.worktreePath}`);
     }
 
-    // Re-read the prompt file
-    const promptPath = path.join(session.worktreePath, '.claude', 'session-prompt.md');
-    if (!fs.existsSync(promptPath)) {
-      throw new Error(`Worker prompt not found at ${promptPath}`);
+    // Determine the execution mode:
+    // - If transitioning from planning_complete, use 'autonomous' mode (build phase)
+    // - Otherwise, keep the current mode
+    const mode: ExecutionMode = session.status === 'planning_complete' ? 'autonomous' : session.mode;
+
+    // For planning_complete → building transition, regenerate the prompt
+    // Otherwise, re-read the existing prompt file
+    let promptPath = path.join(session.worktreePath, '.claude', 'session-prompt.md');
+    let promptContent: string;
+
+    if (session.status === 'planning_complete') {
+      // Regenerate prompt with building mode (autonomous)
+      promptPath = await this.writeWorkerPrompt(
+        session.worktreePath,
+        session.issue,
+        session.branch,
+        mode, // 'autonomous' mode for building
+        undefined // No additional sections
+      );
+      promptContent = await fs.promises.readFile(promptPath, 'utf-8');
+    } else {
+      // Re-read the existing prompt file
+      if (!fs.existsSync(promptPath)) {
+        throw new Error(`Worker prompt not found at ${promptPath}`);
+      }
+      promptContent = await fs.promises.readFile(promptPath, 'utf-8');
     }
-    const promptContent = await fs.promises.readFile(promptPath, 'utf-8');
 
     // Spawn a fresh worker in the existing worktree
     const spawnResult = await this.spawner.spawn({
