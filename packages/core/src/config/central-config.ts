@@ -135,6 +135,12 @@ export type GitOperationsConfig = z.infer<typeof GitOperationsConfig>;
 export const SpawnerConfig = z.object({
   /** Spawner type: 'windows-terminal' for local dev, 'docker' for containerized */
   type: z.enum(['windows-terminal', 'docker']).default('windows-terminal'),
+  /**
+   * Use PTY for interactive terminal access via web dashboard.
+   * When true, workers spawn with full TTY support for real-time viewing.
+   * When false (default), uses headless mode with log file capture.
+   */
+  usePty: z.boolean().default(false),
   /** Docker-specific settings (only used when type='docker') */
   docker: z.object({
     /** Docker image to use (default: 'ppds-worker:latest') */

@@ -1,5 +1,11 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { MultiRepoService } from '../services/multi-repo-service.js';
+import {
+  initializeTerminalHandler,
+  handleTerminalMessage,
+  cleanupClientSubscriptions,
+} from './terminal-handler.js';
+import type { TerminalMessage } from '@ppds-orchestration/core';
 
 interface WSMessage {
   type: string;
@@ -15,6 +21,9 @@ export function setupWebSocket(
 ): void {
   const clients = new Set<WebSocket>();
 
+  // Initialize terminal handler for PTY streaming
+  initializeTerminalHandler();
+
   wss.on('connection', (ws) => {
     console.log('WebSocket client connected');
     clients.add(ws);
@@ -22,6 +31,13 @@ export function setupWebSocket(
     ws.on('message', (data) => {
       try {
         const message: WSMessage = JSON.parse(data.toString());
+
+        // Check if this is a terminal message first
+        if (message.type?.startsWith('terminal:')) {
+          handleTerminalMessage(ws, message as unknown as TerminalMessage);
+          return;
+        }
+
         handleClientMessage(ws, message, multiRepoService);
       } catch (error) {
         console.error('Invalid WebSocket message:', error);
@@ -31,11 +47,15 @@ export function setupWebSocket(
     ws.on('close', () => {
       console.log('WebSocket client disconnected');
       clients.delete(ws);
+      // Clean up any terminal subscriptions
+      cleanupClientSubscriptions(ws);
     });
 
     ws.on('error', (error) => {
       console.error('WebSocket error:', error);
       clients.delete(ws);
+      // Clean up any terminal subscriptions
+      cleanupClientSubscriptions(ws);
     });
 
     // Send initial connection message

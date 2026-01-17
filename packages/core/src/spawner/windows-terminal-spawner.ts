@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { WorkerSpawner, SpawnResult, SpawnInfo, WorkerStatus } from './worker-spawner.js';
 import { WorkerSpawnRequest } from '../session/types.js';
+import { getSharedPtyManager } from '../pty/pty-manager.js';
 
 /**
  * Headless worker spawner for Windows.
@@ -19,6 +20,12 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
     worktreePath: string;
     logPath: string;
   }>();
+
+  /**
+   * Track PTY spawned workers by spawn ID.
+   * PTY sessions are managed by PtyManager, we just track which spawns used PTY.
+   */
+  private ptySpawns = new Set<string>();
 
   getName(): string {
     return 'Headless Spawner';
@@ -73,7 +80,12 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
     const logFileName = `worker-${iteration}-${timestamp}.log`;
     const logPath = path.join(claudeDir, logFileName);
 
-    // Create log file write stream
+    // PTY mode: use PtyManager for interactive terminal access
+    if (request.usePty) {
+      return this.spawnWithPty(spawnId, spawnedAt, request, logPath);
+    }
+
+    // Headless mode: create log file write stream
     const logStream = fs.createWriteStream(logPath, { flags: 'w' });
 
     // Write header to log
@@ -149,6 +161,13 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
    * Stops a running worker by killing the process.
    */
   async stop(spawnId: string): Promise<void> {
+    // Check if this is a PTY spawn
+    if (this.ptySpawns.has(spawnId)) {
+      const ptyManager = getSharedPtyManager();
+      ptyManager.kill(spawnId);
+      return;
+    }
+
     const info = this.runningProcesses.get(spawnId);
     if (!info) {
       return; // Already stopped or unknown
@@ -175,6 +194,19 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
    * Gets the current status of a worker by checking if the process has exited.
    */
   async getStatus(spawnId: string): Promise<WorkerStatus> {
+    // Check if this is a PTY spawn
+    if (this.ptySpawns.has(spawnId)) {
+      const ptyManager = getSharedPtyManager();
+      const state = ptyManager.getState(spawnId);
+      if (!state) {
+        return { running: false };
+      }
+      return {
+        running: state.running,
+        exitCode: state.exitCode,
+      };
+    }
+
     const info = this.runningProcesses.get(spawnId);
     if (!info) {
       // Unknown spawn - assume not running
@@ -196,7 +228,56 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
    * Gets the log file path for a spawn.
    */
   getLogPath(spawnId: string): string | undefined {
+    // Check if this is a PTY spawn
+    if (this.ptySpawns.has(spawnId)) {
+      const ptyManager = getSharedPtyManager();
+      return ptyManager.getLogPath(spawnId);
+    }
     return this.runningProcesses.get(spawnId)?.logPath;
+  }
+
+  /**
+   * Spawns a worker with PTY for interactive terminal access.
+   * Spawns Claude directly and writes the prompt via PTY stdin.
+   */
+  private async spawnWithPty(
+    spawnId: string,
+    spawnedAt: string,
+    request: WorkerSpawnRequest,
+    logPath: string
+  ): Promise<SpawnResult> {
+    const ptyManager = getSharedPtyManager();
+
+    try {
+      // Spawn Claude via cmd.exe to resolve PATH (node-pty doesn't resolve PATH)
+      // Pass the prompt as a command line argument (not stdin) to show interactive TUI
+      // --dangerously-skip-permissions for autonomous operation
+      await ptyManager.createSession({
+        sessionId: spawnId,
+        command: 'cmd.exe',
+        args: ['/c', 'claude', request.promptContent, '--dangerously-skip-permissions'],
+        cwd: request.workingDirectory,
+        logPath,
+        cols: 150,
+        rows: 40,
+      });
+
+      // Track this as a PTY spawn
+      this.ptySpawns.add(spawnId);
+
+      return {
+        success: true,
+        spawnId,
+        spawnedAt,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        spawnId,
+        spawnedAt,
+        error: `Failed to spawn PTY: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 
   /**

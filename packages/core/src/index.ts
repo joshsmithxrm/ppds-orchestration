@@ -96,6 +96,24 @@ export type { HookContext, HookResult } from './hooks/hook-executor.js';
 export { ProcessTracker } from './process/process-tracker.js';
 export type { TrackedProcess, ProcessExitCallback } from './process/process-tracker.js';
 
+// PTY manager
+export { PtyManager, getSharedPtyManager } from './pty/index.js';
+export type {
+  PtySessionConfig,
+  PtySessionState,
+  PtyDataCallback,
+  PtyExitCallback,
+  TerminalMessageType,
+  TerminalConnectMessage,
+  TerminalDataMessage,
+  TerminalInputMessage,
+  TerminalResizeMessage,
+  TerminalDisconnectMessage,
+  TerminalErrorMessage,
+  TerminalExitMessage,
+  TerminalMessage,
+} from './pty/index.js';
+
 // Plan parser utilities
 export {
   parsePlanFile,

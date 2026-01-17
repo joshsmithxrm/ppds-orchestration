@@ -2,6 +2,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import RalphStatus from '../components/RalphStatus';
 import ConfirmDialog from '../components/ConfirmDialog';
+import Terminal from '../components/Terminal';
 
 interface SessionDetail {
   id: string;
@@ -17,6 +18,8 @@ interface SessionDetail {
   stuckReason?: string;
   forwardedMessage?: string;
   pullRequestUrl?: string;
+  /** Spawn ID for PTY terminal connection */
+  spawnId?: string;
   worktreeStatus?: {
     filesChanged: number;
     insertions: number;
@@ -275,6 +278,19 @@ function SessionView() {
       {/* Ralph Status (for ralph mode sessions) */}
       {session.mode === 'ralph' && (
         <RalphStatus repoId={repoId!} sessionId={sessionId!} />
+      )}
+
+      {/* Live Terminal (when spawnId is available) */}
+      {session.spawnId && (
+        <div className="bg-gray-800 rounded-lg p-4">
+          <h2 className="text-lg font-semibold text-white mb-3">
+            Live Terminal
+          </h2>
+          <Terminal
+            sessionId={session.spawnId}
+            className="h-96"
+          />
+        </div>
       )}
 
       {/* Stuck Reason */}

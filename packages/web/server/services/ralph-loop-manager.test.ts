@@ -64,7 +64,7 @@ describe('RalphLoopManager', () => {
     },
     doneSignal: { type: 'file', value: '.claude/.ralph-done' },
     iterationDelayMs: 5000,
-    spawner: { type: 'windows-terminal', docker: { image: 'ppds-worker:latest', memoryLimit: '4g', cpuLimit: '2', volumes: [], env: {} } },
+    spawner: { type: 'windows-terminal', usePty: false, docker: { image: 'ppds-worker:latest', memoryLimit: '4g', cpuLimit: '2', volumes: [], env: {} } },
     reviewConfig: { maxCycles: 3, timeoutMs: 300_000 },
     ...overrides,
   });
@@ -1395,6 +1395,7 @@ describe('RalphLoopManager', () => {
     let reviewManager: RalphLoopManager;
 
     beforeEach(() => {
+      vi.useFakeTimers();
       // Reset mocks before each test
       vi.mocked(invokeReviewAgent).mockReset();
       vi.mocked(notifyReviewStuck).mockReset();
@@ -1407,7 +1408,15 @@ describe('RalphLoopManager', () => {
         reviewManager.stopLoop('test-repo', '1');
       }
       manager.stopLoop('test-repo', '1');
+      vi.useRealTimers();
     });
+
+    // Helper to set up worker status file with "complete" signal
+    const setupWorkerCompleteSignal = () => {
+      const claudeDir = path.join(tempDir, '.claude');
+      fsActual.mkdirSync(claudeDir, { recursive: true });
+      fsActual.writeFileSync(path.join(claudeDir, '.worker-status'), 'complete');
+    };
 
     it('should initialize reviewCycle to 0 when starting a loop', async () => {
       const state = await manager.startLoop('test-repo', '1');
@@ -1461,12 +1470,16 @@ describe('RalphLoopManager', () => {
 `;
 
       fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+      setupWorkerCompleteSignal();
 
       const mockSession = createMockSession({
         status: 'working',
         worktreePath: tempDir,
+        spawnId: 'test-spawn-id',
       });
       vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+      // Worker has stopped (triggers handleWorkerStopped which reads .worker-status)
+      vi.mocked(mockMultiRepoService.getWorkerStatus!).mockResolvedValue({ running: false });
 
       const callback = vi.fn();
       reviewManager.onEvent(callback);
@@ -1474,7 +1487,7 @@ describe('RalphLoopManager', () => {
       await reviewManager.startLoop('test-repo', '1');
 
       // Wait for the poll cycle to execute
-      await new Promise((resolve) => setTimeout(resolve, 6000));
+      await vi.advanceTimersByTimeAsync(5000);
 
       // Review agent should have been called
       expect(invokeReviewAgent).toHaveBeenCalledWith(
@@ -1485,7 +1498,7 @@ describe('RalphLoopManager', () => {
           issueNumber: 1,
         })
       );
-    }, 10000);
+    });
 
     it('should create PR on APPROVED verdict', async () => {
       vi.mocked(invokeReviewAgent).mockResolvedValue({
@@ -1528,18 +1541,21 @@ describe('RalphLoopManager', () => {
 - **Acceptance**: Done
 `;
       fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+      setupWorkerCompleteSignal();
 
       const mockSession = createMockSession({
         status: 'working',
         worktreePath: tempDir,
+        spawnId: 'test-spawn-id',
       });
       vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+      vi.mocked(mockMultiRepoService.getWorkerStatus!).mockResolvedValue({ running: false });
 
       const callback = vi.fn();
       reviewManager.onEvent(callback);
 
       await reviewManager.startLoop('test-repo', '1');
-      await new Promise((resolve) => setTimeout(resolve, 6000));
+      await vi.advanceTimersByTimeAsync(5000);
 
       // PR should have been created
       expect(createPullRequest).toHaveBeenCalled();
@@ -1549,7 +1565,7 @@ describe('RalphLoopManager', () => {
 
       // Loop should be done
       expect(callback).toHaveBeenCalledWith('loop_done', expect.any(Object));
-    }, 10000);
+    });
 
     it('should increment reviewCycle on NEEDS_WORK verdict', async () => {
       vi.mocked(invokeReviewAgent).mockResolvedValue({
@@ -1577,6 +1593,9 @@ describe('RalphLoopManager', () => {
         }),
       };
 
+      // Mock restart to prevent infinite timer loop
+      mockMultiRepoService.restart = vi.fn().mockResolvedValue(undefined);
+
       reviewManager = new RalphLoopManager(
         mockMultiRepoService as MultiRepoService,
         configWithReview
@@ -1589,16 +1608,18 @@ describe('RalphLoopManager', () => {
 - **Acceptance**: Done
 `;
       fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
-      fsActual.mkdirSync(path.join(tempDir, '.claude'), { recursive: true });
+      setupWorkerCompleteSignal();
 
       const mockSession = createMockSession({
         status: 'working',
         worktreePath: tempDir,
+        spawnId: 'test-spawn-id',
       });
       vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+      vi.mocked(mockMultiRepoService.getWorkerStatus!).mockResolvedValue({ running: false });
 
       await reviewManager.startLoop('test-repo', '1');
-      await new Promise((resolve) => setTimeout(resolve, 6000));
+      await vi.advanceTimersByTimeAsync(5000);
 
       // Check that reviewCycle was incremented
       const state = reviewManager.getLoopState('test-repo', '1');
@@ -1610,7 +1631,7 @@ describe('RalphLoopManager', () => {
       const feedbackContent = fsActual.readFileSync(feedbackPath, 'utf-8');
       expect(feedbackContent).toContain('Review Cycle');
       expect(feedbackContent).toContain('Tests are failing');
-    }, 10000);
+    });
 
     it('should mark stuck after maxCycles NEEDS_WORK verdicts', async () => {
       vi.mocked(invokeReviewAgent).mockResolvedValue({
@@ -1652,18 +1673,21 @@ describe('RalphLoopManager', () => {
 - **Acceptance**: Done
 `;
       fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
+      setupWorkerCompleteSignal();
 
       const mockSession = createMockSession({
         status: 'working',
         worktreePath: tempDir,
+        spawnId: 'test-spawn-id',
       });
       vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+      vi.mocked(mockMultiRepoService.getWorkerStatus!).mockResolvedValue({ running: false });
 
       const callback = vi.fn();
       reviewManager.onEvent(callback);
 
       await reviewManager.startLoop('test-repo', '1');
-      await new Promise((resolve) => setTimeout(resolve, 6000));
+      await vi.advanceTimersByTimeAsync(5000);
 
       // Should notify stuck
       expect(notifyReviewStuck).toHaveBeenCalledWith(
@@ -1676,7 +1700,7 @@ describe('RalphLoopManager', () => {
 
       // Loop should be stuck
       expect(callback).toHaveBeenCalledWith('loop_stuck', expect.any(Object));
-    }, 10000);
+    });
 
     it('should handle review agent failure as NEEDS_WORK', async () => {
       vi.mocked(invokeReviewAgent).mockResolvedValue({
@@ -1700,6 +1724,9 @@ describe('RalphLoopManager', () => {
         }),
       };
 
+      // Mock restart to prevent infinite timer loop
+      mockMultiRepoService.restart = vi.fn().mockResolvedValue(undefined);
+
       reviewManager = new RalphLoopManager(
         mockMultiRepoService as MultiRepoService,
         configWithReview
@@ -1712,21 +1739,23 @@ describe('RalphLoopManager', () => {
 - **Acceptance**: Done
 `;
       fsActual.writeFileSync(path.join(tempDir, 'IMPLEMENTATION_PLAN.md'), planContent);
-      fsActual.mkdirSync(path.join(tempDir, '.claude'), { recursive: true });
+      setupWorkerCompleteSignal();
 
       const mockSession = createMockSession({
         status: 'working',
         worktreePath: tempDir,
+        spawnId: 'test-spawn-id',
       });
       vi.mocked(mockMultiRepoService.getSession!).mockResolvedValue(mockSession);
+      vi.mocked(mockMultiRepoService.getWorkerStatus!).mockResolvedValue({ running: false });
 
       await reviewManager.startLoop('test-repo', '1');
-      await new Promise((resolve) => setTimeout(resolve, 6000));
+      await vi.advanceTimersByTimeAsync(5000);
 
       // Check that reviewCycle was incremented (failure treated as NEEDS_WORK)
       const state = reviewManager.getLoopState('test-repo', '1');
       expect(state?.reviewCycle).toBe(1);
       expect(state?.lastReviewVerdict?.status).toBe('NEEDS_WORK');
-    }, 10000);
+    });
   });
 });

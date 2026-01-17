@@ -133,6 +133,7 @@ export class MultiRepoService {
       baseBranch: repoConfig.baseBranch,
       cliCommand: effectiveConfig.cliCommand,
       spawner,
+      usePty: effectiveConfig.ralph.spawner?.usePty,
     });
   }
 

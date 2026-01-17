@@ -195,6 +195,12 @@ export interface WorkerSpawnRequest {
   githubRepo: string;
   /** Ralph iteration number (1-indexed, for log file naming). */
   iteration?: number;
+  /**
+   * Use PTY for interactive terminal access.
+   * When true, spawns with full PTY support for web terminal viewing.
+   * When false (default), uses headless mode with log capture.
+   */
+  usePty?: boolean;
 }
 
 /**

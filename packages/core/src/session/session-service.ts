@@ -47,6 +47,9 @@ export interface SessionServiceConfig {
 
   /** Optional: Base branch for worktrees (default: 'origin/main'). */
   baseBranch?: string;
+
+  /** Optional: Use PTY for interactive terminal access via web dashboard. */
+  usePty?: boolean;
 }
 
 /**
@@ -199,6 +202,7 @@ export class SessionService {
       promptContent,
       githubOwner: this.config.githubOwner,
       githubRepo: this.config.githubRepo,
+      usePty: this.config.usePty,
     });
 
     if (!spawnResult.success) {
@@ -266,6 +270,7 @@ export class SessionService {
       githubOwner: this.config.githubOwner,
       githubRepo: this.config.githubRepo,
       iteration,
+      usePty: this.config.usePty,
     });
 
     if (!spawnResult.success) {
