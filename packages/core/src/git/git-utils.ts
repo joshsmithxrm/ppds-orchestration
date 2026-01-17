@@ -121,6 +121,10 @@ export class GitUtils {
   /**
    * Removes a git worktree.
    * Returns a result object indicating success or failure.
+   *
+   * Handles the case where git worktree remove partially succeeds
+   * (unregisters worktree, deletes contents) but can't delete the
+   * folder itself due to a lingering file handle.
    */
   async removeWorktree(worktreePath: string): Promise<WorktreeRemovalResult> {
     try {
@@ -135,10 +139,38 @@ export class GitUtils {
         msg.includes('not a valid') ||
         msg.includes('is not a valid path')
       ) {
+        // Worktree is unregistered, but folder might still exist - try to clean up
+        await this.tryDeleteFolder(worktreePath);
         return { success: true, notFound: true };
       }
 
+      // For permission denied or other errors, the worktree might be partially
+      // removed (unregistered from git but folder remains). Try to clean up.
+      if (msg.includes('Permission denied')) {
+        const cleaned = await this.tryDeleteFolder(worktreePath);
+        if (cleaned) {
+          return { success: true };
+        }
+      }
+
       return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Attempts to delete a folder that may be left over from partial worktree removal.
+   * Returns true if folder was deleted or doesn't exist.
+   */
+  private async tryDeleteFolder(folderPath: string): Promise<boolean> {
+    try {
+      if (!fs.existsSync(folderPath)) {
+        return true;
+      }
+      await fs.promises.rm(folderPath, { recursive: true, force: true });
+      return true;
+    } catch {
+      // Folder still can't be deleted - leave it
+      return false;
     }
   }
 
