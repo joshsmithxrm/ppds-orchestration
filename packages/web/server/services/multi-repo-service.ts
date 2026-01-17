@@ -296,6 +296,15 @@ export class MultiRepoService {
   }
 
   /**
+   * Stop a worker process.
+   * Used when loop becomes stuck to cleanup running workers.
+   */
+  async stopWorker(repoId: string, spawnId: string): Promise<void> {
+    const service = this.getService(repoId);
+    return service.stopWorker(spawnId);
+  }
+
+  /**
    * Restart an existing session (for Ralph loop iterations).
    * Spawns a fresh worker in the existing worktree.
    */

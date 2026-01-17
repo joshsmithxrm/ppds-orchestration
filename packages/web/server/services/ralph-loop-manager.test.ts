@@ -79,6 +79,7 @@ describe('RalphLoopManager', () => {
       getSession: vi.fn(),
       spawn: vi.fn(),
       getWorkerStatus: vi.fn().mockResolvedValue({ running: true }), // Default: worker running
+      stopWorker: vi.fn().mockResolvedValue(undefined), // Stop worker mock
     };
 
     mockCentralConfig = {

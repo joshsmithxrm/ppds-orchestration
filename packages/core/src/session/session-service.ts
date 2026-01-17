@@ -726,6 +726,19 @@ export class SessionService {
     return this.spawner.getStatus(spawnId);
   }
 
+  /**
+   * Stops a spawned worker process.
+   * Used when loop becomes stuck to cleanup running workers.
+   */
+  async stopWorker(spawnId: string): Promise<void> {
+    try {
+      await this.spawner.stop(spawnId);
+    } catch (error) {
+      // Log but don't fail - process may have already exited
+      console.warn(`Error stopping worker process: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
   // ============================================
   // Private helper methods
   // ============================================

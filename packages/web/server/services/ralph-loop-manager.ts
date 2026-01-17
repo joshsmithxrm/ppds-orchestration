@@ -226,6 +226,20 @@ export class RalphLoopManager {
 
         state.lastChecked = new Date().toISOString();
 
+        // Check for status file BEFORE checking process exit
+        // This handles PTY mode where Claude can't exit itself
+        const statusFile = path.join(session.worktreePath, '.claude', '.worker-status');
+        if (fs.existsSync(statusFile)) {
+          console.log(`Ralph: Detected status file for ${state.repoId}/${state.sessionId}`);
+          // Kill the worker process since it can't exit itself in PTY mode
+          if (session.spawnId) {
+            await this.multiRepoService.stopWorker(state.repoId, session.spawnId);
+          }
+          // Use existing handler which reads and processes the status file
+          await this.handleWorkerStopped(state, session);
+          continue;
+        }
+
         // Check if worker process has exited (headless mode exits when done)
         const workerStatus = await this.getWorkerStatus(state, session);
         if (!workerStatus.running) {
@@ -784,12 +798,40 @@ export class RalphLoopManager {
 
   /**
    * Handle loop getting stuck.
+   * Marks the current iteration as failed and stops the worker process.
    */
   private handleLoopStuck(state: RalphLoopState, reason: string): void {
     state.state = 'stuck';
+
+    // Mark current iteration as failed if still running
+    const currentIteration = state.iterations[state.iterations.length - 1];
+    if (currentIteration && currentIteration.exitType === 'running') {
+      currentIteration.exitType = 'abnormal';
+      currentIteration.endedAt = new Date().toISOString();
+
+      // Stop the worker process (fire and forget)
+      this.stopCurrentWorker(state);
+    }
+
     this.emit('loop_stuck', state);
 
     console.log(`Ralph loop stuck for ${state.repoId}/${state.sessionId}: ${reason}`);
+  }
+
+  /**
+   * Stop the worker process for a loop.
+   * Called when loop becomes stuck to cleanup the running worker.
+   */
+  private async stopCurrentWorker(state: RalphLoopState): Promise<void> {
+    try {
+      const session = await this.multiRepoService.getSession(state.repoId, state.sessionId);
+      if (session?.spawnId) {
+        await this.multiRepoService.stopWorker(state.repoId, session.spawnId);
+        console.log(`Ralph: Stopped worker ${session.spawnId} for stuck loop ${state.repoId}/${state.sessionId}`);
+      }
+    } catch (error) {
+      console.error(`Failed to stop worker for stuck loop: ${error}`);
+    }
   }
 
   /**

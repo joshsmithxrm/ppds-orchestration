@@ -1,105 +1,133 @@
 # Debug Dashboard
 
-Diagnose and fix issues in the web dashboard using Playwright MCP tools.
+Autonomously test and fix the current feature using Playwright MCP tools.
 
 ## Usage
 
-- `/debug <description>` - Diagnose a specific issue (e.g., "/debug there's a TypeError on the main page")
-- `/debug` - General health check of the dashboard
+- `/debug` - Test current feature from conversation context
+- `/debug <scenario>` - Test specific scenario
 
-## Example
+## Behavior
 
-```
-/debug there's a TypeError on the main page
-/debug the worker cards are not rendering
-/debug styling looks broken
-```
+You are **FULLY AUTONOMOUS**. The user wants out of the loop.
+
+- Start servers, build, test, fix, iterate - without asking
+- Only report back when **FIXED** or **TRULY BLOCKED**
+- Don't ask permission for rebuilds, retests, or fixes
 
 ## Instructions
 
-Based on the argument provided ($ARGUMENTS), diagnose and fix dashboard issues.
+### Phase 1: Setup
 
-### Step 1: Check dev server status
+1. **Build the project** (in background):
+   ```bash
+   npm run build
+   ```
 
-First, verify the web dev server is running on port 5173:
+2. **Start dev server** (in background):
+   ```bash
+   npm run dev -w packages/web
+   ```
 
-```bash
-# Windows - check if port 5173 is in use
-netstat -ano | findstr :5173
-```
+3. **Wait for server ready** - look for "ready in Xms" or similar in output
 
-If the server is NOT running, start it in the background:
-```bash
-npm run dev -w packages/web
-```
+4. **Verify server** - navigate to http://localhost:5173
 
-Wait a few seconds for the server to start.
+### Phase 2: Identify Test Target
 
-### Step 2: Navigate to the dashboard
+From conversation context, identify:
+- What feature/fix we're testing
+- Success criteria (what "working" looks like)
+- Failure indicators (what we're trying to fix)
 
-Use Playwright MCP to open the dashboard:
+If context is unclear, the user likely wants you to test whatever was just implemented or discussed.
 
-1. Call `playwright_navigate` with URL `http://localhost:5173`
-2. Wait for the page to fully load
+### Phase 3: Execute Test Loop
 
-### Step 3: Capture diagnostic data
+Use Playwright MCP tools to test the feature:
 
-Use Playwright MCP tools to gather information:
+**Common Playwright Selectors (Dashboard):**
 
-1. **Screenshot**: Call `playwright_screenshot` to capture the current visual state
-2. **Console logs**: Call `playwright_console` to get any JavaScript errors or warnings
-3. **Page content**: If needed, call `playwright_evaluate` with `document.body.innerHTML` to inspect DOM
+| Element | Selector |
+|---------|----------|
+| Dashboard heading | `page.getByRole('heading', { name: 'Dashboard' })` |
+| Spawn button | `page.getByRole('button', { name: /\+ Spawn Worker/i })` |
+| Spawn dialog | `page.getByRole('heading', { name: 'Spawn Worker', exact: true })` |
+| Repo dropdown | `page.getByRole('combobox')` |
+| Issue input | `page.getByPlaceholderText('e.g., 5 or 1, 2, 3')` |
+| Manual mode | `page.getByRole('button', { name: 'Manual' })` |
+| Autonomous mode | `page.getByRole('button', { name: 'Autonomous' })` |
+| Submit spawn | `page.getByRole('button', { name: /Spawn Worker/i, exact: true })` |
+| Live Terminal | `page.getByRole('heading', { name: 'Live Terminal' })` |
 
-### Step 4: Analyze the issue
+**Test Flow:**
+1. Navigate to dashboard
+2. Perform actions to trigger the feature
+3. Observe results (snapshots, console, network)
+4. Compare against success criteria
 
-Based on the user's description ($ARGUMENTS) and the captured data:
+### Phase 4: Fix Loop (if test fails)
 
-- Look for JavaScript errors in the console output
-- Check the screenshot for visual issues (blank page, broken layout, missing elements)
-- Identify error patterns (e.g., "Cannot read properties of undefined")
+1. **Capture diagnostic data:**
+   - `browser_take_screenshot` - visual state
+   - `browser_console_messages` - JS errors
+   - `browser_network_requests` - API failures
+   - Read server output file for backend logs
 
-### Step 5: Diagnose root cause
+2. **Diagnose failure point:**
+   - Where did it break?
+   - What error messages?
+   - What's different from expected?
 
-Common issues and their causes:
+3. **Read relevant source files**
 
-| Error Pattern | Likely Cause | Solution |
-|---------------|--------------|----------|
-| Blank page | Import/syntax error | Check console for module errors |
-| Missing styles | Tailwind not loading | Check postcss/tailwind config |
-| "Module not found" | Missing dependency | Run `npm install` |
-| Network errors | Backend not running | Check if both server and client are running |
-| API fetch failed | Backend API endpoint error | Check server logs |
+4. **Make code fix**
 
-### Step 6: Fix and verify
+5. **Rebuild:**
+   ```bash
+   npm run build
+   ```
 
-1. Read the relevant source files based on the error location
-2. Make the necessary code changes to fix the issue
-3. Refresh the page using `playwright_navigate` again
-4. Take another screenshot to verify the fix worked
-5. Check console for any remaining errors
+6. **Re-test** - back to Phase 3
 
-### Step 7: Report findings
+7. **Repeat** until success OR blocked
 
-Summarize:
-- What the issue was
-- What caused it
-- What was done to fix it
-- Verification that the fix worked
+### Phase 5: Report
 
-## Notes
+**Only stop when:**
 
-- The web dashboard runs two processes: Vite frontend (port 5173) and Express backend (port 3847)
-- Use `npm run dev -w packages/web` to start both concurrently
-- Access via Vite port (5173), not backend port (3847)
-- WebSocket real-time updates may not work in dev mode (use production build for full testing)
+✅ **SUCCESS** - Feature works, all criteria met
+- Report what was tested
+- Confirm success criteria met
+- Ask user to verify if needed
+
+❌ **BLOCKED** - Can't fix autonomously
+- Explain what's failing
+- Show diagnostic data
+- Describe what you tried
+- Ask for user input/decision
+
+## Key Principle
+
+**Iterate silently. Don't ask permission. Fix and re-test.**
+
+The user trusts you to figure it out. Only come back when done or truly stuck.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `packages/web/src/App.tsx` | Main React component |
-| `packages/web/src/pages/Dashboard.tsx` | Dashboard page component |
-| `packages/web/src/components/` | UI components |
-| `packages/web/server/index.ts` | Express backend server |
-| `packages/web/server/routes/` | API route handlers |
-| `packages/web/vite.config.ts` | Vite configuration |
+| `packages/web/src/App.tsx` | Main React app |
+| `packages/web/src/pages/Dashboard.tsx` | Dashboard page |
+| `packages/web/src/pages/SessionView.tsx` | Session detail page |
+| `packages/web/src/components/Terminal.tsx` | Live terminal component |
+| `packages/web/src/components/SpawnDialog.tsx` | Worker spawn dialog |
+| `packages/web/server/index.ts` | Express backend |
+| `packages/core/src/spawner/` | Worker spawning logic |
+
+## Notes
+
+- Dev server runs on port 5173 (Vite frontend) with backend on 3847
+- Always use `npm run dev -w packages/web` to start both together
+- WebSocket updates require the full dev server, not just Vite
+- If browser gets stuck, use `browser_close` and re-navigate
