@@ -309,18 +309,6 @@ export class MultiRepoService {
   }
 
   /**
-   * Forward message to worker.
-   */
-  async forward(
-    repoId: string,
-    sessionId: string,
-    message: string
-  ): Promise<SessionState> {
-    const service = this.getService(repoId);
-    return service.forward(sessionId, message);
-  }
-
-  /**
    * Pause session.
    */
   async pause(repoId: string, sessionId: string): Promise<SessionState> {
@@ -340,13 +328,13 @@ export class MultiRepoService {
    * Delete a session with safe cleanup.
    * @param repoId - Repository ID
    * @param sessionId - Session ID to delete
-   * @param options.keepWorktree - If true, don't remove worktree
    * @param options.force - If true, delete session even if worktree cleanup fails
+   * @param options.deletionMode - How aggressively to clean up
    */
   async delete(
     repoId: string,
     sessionId: string,
-    options?: { keepWorktree?: boolean; force?: boolean }
+    options?: { force?: boolean; deletionMode?: 'folder-only' | 'with-local-branch' | 'everything' }
   ): Promise<DeleteResult> {
     const service = this.getService(repoId);
     return service.delete(sessionId, options);
@@ -366,6 +354,17 @@ export class MultiRepoService {
   async rollbackDeletion(repoId: string, sessionId: string): Promise<SessionState> {
     const service = this.getService(repoId);
     return service.rollbackDeletion(sessionId);
+  }
+
+  /**
+   * Get worktree state for deletion safety checks.
+   */
+  async getWorktreeState(
+    repoId: string,
+    sessionId: string
+  ): Promise<{ uncommittedFiles: number; unpushedCommits: number; isClean: boolean } | null> {
+    const service = this.getService(repoId);
+    return service.getWorktreeState(sessionId);
   }
 
   /**

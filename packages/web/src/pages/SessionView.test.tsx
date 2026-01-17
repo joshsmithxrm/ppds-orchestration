@@ -120,66 +120,6 @@ describe('SessionView', () => {
     expect(screen.getByText('Need auth decision')).toBeInTheDocument();
   });
 
-  it('handles message forwarding', async () => {
-    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string, options) => {
-      if (options?.method === 'PATCH') {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              session: { ...mockSession, forwardedMessage: 'Test message' },
-            }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ session: mockSession }),
-      });
-    });
-
-    renderSessionView();
-
-    await waitFor(() => {
-      expect(screen.getByText('test-repo #123')).toBeInTheDocument();
-    });
-
-    const input = screen.getByPlaceholderText(/Enter guidance/i);
-    fireEvent.change(input, { target: { value: 'Test message' } });
-
-    const sendButton = screen.getByRole('button', { name: /Send/i });
-    fireEvent.click(sendButton);
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith(
-        '/api/sessions/test-repo/123',
-        expect.objectContaining({
-          method: 'PATCH',
-          body: JSON.stringify({ action: 'forward', message: 'Test message' }),
-        })
-      );
-    });
-  });
-
-  it('shows pending forwarded message', async () => {
-    const sessionWithMessage = {
-      ...mockSession,
-      forwardedMessage: 'Pending guidance',
-    };
-
-    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ session: sessionWithMessage }),
-    });
-
-    renderSessionView();
-
-    await waitFor(() => {
-      expect(screen.getByText('Pending message:')).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('Pending guidance')).toBeInTheDocument();
-  });
-
   it('handles pause action', async () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string, options) => {
       if (options?.method === 'PATCH') {

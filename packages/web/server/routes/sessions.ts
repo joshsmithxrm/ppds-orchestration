@@ -108,6 +108,27 @@ sessionsRouter.get('/:repoId/:sessionId', async (req: Request, res: Response) =>
 });
 
 /**
+ * GET /api/sessions/:repoId/:sessionId/worktree-state
+ * Get worktree state for deletion safety checks.
+ */
+sessionsRouter.get('/:repoId/:sessionId/worktree-state', async (req: Request, res: Response) => {
+  try {
+    const service: MultiRepoService = req.app.locals.multiRepoService;
+    const { repoId, sessionId } = req.params;
+
+    const state = await service.getWorktreeState(repoId, sessionId);
+    if (!state) {
+      return res.status(404).json({ error: 'Session or worktree not found' });
+    }
+
+    res.json(state);
+  } catch (error) {
+    console.error('Error getting worktree state:', error);
+    res.status(500).json({ error: 'Failed to get worktree state' });
+  }
+});
+
+/**
  * POST /api/sessions/:repoId
  * Spawn new worker session(s).
  * Body: { issueNumber?: number, issueNumbers?: number[], mode?: 'manual' | 'autonomous', iterations?: number }
@@ -161,24 +182,17 @@ sessionsRouter.post('/:repoId', async (req: Request, res: Response) => {
 
 /**
  * PATCH /api/sessions/:repoId/:sessionId
- * Update session (forward message, pause, resume, cancel).
+ * Update session (pause, resume, cancel).
  */
 sessionsRouter.patch('/:repoId/:sessionId', async (req: Request, res: Response) => {
   try {
     const service: MultiRepoService = req.app.locals.multiRepoService;
     const { repoId, sessionId } = req.params;
-    const { action, message, status, reason, prUrl } = req.body;
+    const { action, status, reason, prUrl } = req.body;
 
     let session;
 
     switch (action) {
-      case 'forward':
-        if (!message) {
-          return res.status(400).json({ error: 'message is required for forward action' });
-        }
-        session = await service.forward(repoId, sessionId, message);
-        break;
-
       case 'pause':
         session = await service.pause(repoId, sessionId);
         break;
@@ -218,17 +232,17 @@ sessionsRouter.patch('/:repoId/:sessionId', async (req: Request, res: Response) 
  * DELETE /api/sessions/:repoId/:sessionId
  * Cancel and remove a session.
  * Query params:
- *   - keepWorktree=true: Don't remove worktree
  *   - force=true: Delete session even if worktree cleanup fails
+ *   - deletionMode: 'folder-only' | 'with-local-branch' | 'everything'
  */
 sessionsRouter.delete('/:repoId/:sessionId', async (req: Request, res: Response) => {
   try {
     const service: MultiRepoService = req.app.locals.multiRepoService;
     const { repoId, sessionId } = req.params;
-    const keepWorktree = req.query.keepWorktree === 'true';
     const force = req.query.force === 'true';
+    const deletionMode = (req.query.deletionMode as string) || 'folder-only';
 
-    const result = await service.delete(repoId, sessionId, { keepWorktree, force });
+    const result = await service.delete(repoId, sessionId, { force, deletionMode: deletionMode as 'folder-only' | 'with-local-branch' | 'everything' });
 
     if (!result.success && !force) {
       // Return 409 Conflict for deletion failures

@@ -60,6 +60,9 @@ function Dashboard() {
   const [confirmDismiss, setConfirmDismiss] = useState<DeletionState | null>(null);
   const [confirmClearCompleted, setConfirmClearCompleted] = useState(false);
   const [clearingCompleted, setClearingCompleted] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
+  const [retryingDelete, setRetryingDelete] = useState<string | null>(null);
+  const [rollingBack, setRollingBack] = useState<string | null>(null);
   const [orphans, setOrphans] = useState<OrphanedWorktree[]>([]);
   const [cleaningOrphan, setCleaningOrphan] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(true);
@@ -286,6 +289,7 @@ function Dashboard() {
   const handleConfirmDismiss = async (force?: boolean) => {
     if (!confirmDismiss) return;
     const { repoId, sessionId } = confirmDismiss;
+    setDismissing(true);
     try {
       const url = new URL(`/api/sessions/${repoId}/${sessionId}`, window.location.origin);
       if (force) url.searchParams.set('force', 'true');
@@ -310,10 +314,13 @@ function Dashboard() {
     } catch (err) {
       console.error('Failed to dismiss session:', err);
       setConfirmDismiss(null);
+    } finally {
+      setDismissing(false);
     }
   };
 
   const handleRetryDelete = async (repoId: string, sessionId: string) => {
+    setRetryingDelete(sessionId);
     try {
       const res = await fetch(`/api/sessions/${repoId}/${sessionId}/retry-delete`, {
         method: 'PATCH',
@@ -325,10 +332,13 @@ function Dashboard() {
       }
     } catch (err) {
       console.error('Failed to retry deletion:', err);
+    } finally {
+      setRetryingDelete(null);
     }
   };
 
   const handleRollbackDelete = async (repoId: string, sessionId: string) => {
+    setRollingBack(sessionId);
     try {
       const res = await fetch(`/api/sessions/${repoId}/${sessionId}/rollback-delete`, {
         method: 'PATCH',
@@ -345,6 +355,8 @@ function Dashboard() {
       }
     } catch (err) {
       console.error('Failed to rollback deletion:', err);
+    } finally {
+      setRollingBack(null);
     }
   };
 
@@ -551,7 +563,7 @@ function Dashboard() {
             <button
               onClick={handleClearCompletedClick}
               disabled={clearingCompleted}
-              className="text-xs text-ppds-muted hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="text-xs text-ppds-muted hover:text-white transition-colors px-2 py-1 rounded hover:bg-ppds-surface disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {clearingCompleted ? 'Clearing...' : `Clear Completed (${completedCount})`}
             </button>
@@ -571,7 +583,7 @@ function Dashboard() {
               <Link
                 key={`${session.repoId}-${session.id}`}
                 to={`/session/${session.repoId}/${session.id}`}
-                className="block p-4 hover:bg-gray-700/50 transition-colors"
+                className="block p-4 hover:bg-ppds-surface/50 transition-colors"
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -611,10 +623,11 @@ function Dashboard() {
                             e.stopPropagation();
                             handleRetryDelete(session.repoId, session.id);
                           }}
-                          className="text-xs px-2 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
+                          disabled={retryingDelete === session.id || rollingBack === session.id}
+                          className="text-xs px-2 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Retry deletion"
                         >
-                          Retry
+                          {retryingDelete === session.id ? 'Retrying...' : 'Retry'}
                         </button>
                         <button
                           onClick={(e) => {
@@ -622,10 +635,11 @@ function Dashboard() {
                             e.stopPropagation();
                             handleRollbackDelete(session.repoId, session.id);
                           }}
-                          className="text-xs px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white rounded transition-colors"
+                          disabled={retryingDelete === session.id || rollingBack === session.id}
+                          className="text-xs px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Cancel deletion"
                         >
-                          Cancel
+                          {rollingBack === session.id ? 'Cancelling...' : 'Cancel'}
                         </button>
                       </div>
                     ) : ['complete', 'cancelled'].includes(session.status) && (
@@ -670,6 +684,7 @@ function Dashboard() {
         }
         confirmLabel={confirmDismiss?.showForceOption ? 'Force Delete' : 'Dismiss'}
         variant="danger"
+        loading={dismissing}
         onConfirm={() => handleConfirmDismiss(confirmDismiss?.showForceOption)}
         onCancel={() => setConfirmDismiss(null)}
       />
@@ -681,6 +696,7 @@ function Dashboard() {
         message={`Are you sure you want to clear all ${completedCount} completed session(s)? This cannot be undone.`}
         confirmLabel="Clear All"
         variant="danger"
+        loading={clearingCompleted}
         onConfirm={handleConfirmClearCompleted}
         onCancel={() => setConfirmClearCompleted(false)}
       />

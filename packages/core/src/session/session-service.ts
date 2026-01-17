@@ -427,13 +427,12 @@ export class SessionService {
    * session-watcher to kill the Claude process before removing the worktree.
    *
    * @param sessionId - Session to delete
-   * @param options.keepWorktree - If true, don't remove worktree (deprecated, use deletionMode)
    * @param options.force - If true, delete session even if worktree cleanup fails
    * @param options.deletionMode - How aggressively to clean up (folder-only, with-local-branch, everything)
    */
   async delete(
     sessionId: string,
-    options?: { keepWorktree?: boolean; force?: boolean; deletionMode?: DeletionMode }
+    options?: { force?: boolean; deletionMode?: DeletionMode }
   ): Promise<DeleteResult> {
     const session = await this.store.load(sessionId);
 
@@ -457,7 +456,7 @@ export class SessionService {
     // For active sessions, first set status to 'cancelled' to trigger the
     // session-watcher to kill the Claude process
     const activeStatuses = ['registered', 'planning', 'planning_complete', 'working', 'shipping', 'reviews_in_progress', 'pr_ready', 'stuck', 'paused'];
-    if (activeStatuses.includes(session.status) && !options?.keepWorktree) {
+    if (activeStatuses.includes(session.status)) {
       const cancelledSession: SessionState = {
         ...session,
         status: 'cancelled',
@@ -479,9 +478,8 @@ export class SessionService {
     };
     await this.store.save(deletingSession);
 
-    // Determine deletion mode (default to folder-only for backward compat)
+    // Determine deletion mode (default to folder-only)
     const deletionMode = options?.deletionMode ?? 'folder-only';
-    const shouldRemoveWorktree = !options?.keepWorktree;
 
     // Attempt worktree removal if requested
     let worktreeRemoved = false;
@@ -489,7 +487,7 @@ export class SessionService {
     let localBranchDeleted = false;
     let remoteBranchDeleted = false;
 
-    if (shouldRemoveWorktree && fs.existsSync(session.worktreePath)) {
+    if (fs.existsSync(session.worktreePath)) {
       const result = await this.gitUtils.removeWorktree(session.worktreePath);
       worktreeRemoved = result.success;
       worktreeError = result.error;
@@ -635,47 +633,9 @@ export class SessionService {
   }
 
   /**
-   * Forwards a message to a worker.
-   */
-  async forward(sessionId: string, message: string): Promise<SessionState> {
-    const session = await this.store.load(sessionId);
-
-    if (!session) {
-      throw new Error(`Session '${sessionId}' not found`);
-    }
-
-    // Cannot forward to completed or cancelled sessions
-    if (session.status === 'complete') {
-      throw new Error('Cannot forward message to a completed session');
-    }
-    if (session.status === 'cancelled') {
-      throw new Error('Cannot forward message to a cancelled session');
-    }
-
-    const now = new Date().toISOString();
-    const updatedSession: SessionState = {
-      ...session,
-      forwardedMessage: message,
-      lastHeartbeat: now,
-    };
-
-    await this.store.save(updatedSession);
-
-    // Also write to worktree for worker to read
-    await this.store.writeSessionState(session.worktreePath, {
-      status: updatedSession.status,
-      forwardedMessage: message,
-      lastUpdated: now,
-    });
-
-    return updatedSession;
-  }
-
-  /**
    * Records a heartbeat from a worker.
-   * Returns whether a forwarded message is waiting.
    */
-  async heartbeat(sessionId: string): Promise<{ recorded: boolean; hasMessage: boolean }> {
+  async heartbeat(sessionId: string): Promise<{ recorded: boolean }> {
     const session = await this.store.load(sessionId);
 
     if (!session) {
@@ -689,32 +649,7 @@ export class SessionService {
 
     await this.store.save(updatedSession);
 
-    return {
-      recorded: true,
-      hasMessage: !!session.forwardedMessage,
-    };
-  }
-
-  /**
-   * Acknowledges a forwarded message, clearing it from the session.
-   */
-  async acknowledgeMessage(sessionId: string): Promise<SessionState> {
-    const session = await this.store.load(sessionId);
-
-    if (!session) {
-      throw new Error(`Session '${sessionId}' not found`);
-    }
-
-    const now = new Date().toISOString();
-    const updatedSession: SessionState = {
-      ...session,
-      forwardedMessage: undefined,
-      lastHeartbeat: now,
-    };
-
-    await this.store.save(updatedSession);
-
-    return updatedSession;
+    return { recorded: true };
   }
 
   /**

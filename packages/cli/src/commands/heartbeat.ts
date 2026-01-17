@@ -10,8 +10,5 @@ export async function heartbeatCommand(
 
   if (!options.quiet) {
     console.log(chalk.green('✓ Heartbeat recorded'));
-    if (result.hasMessage) {
-      console.log(chalk.yellow('  You have a forwarded message - check session-state.json'));
-    }
   }
 }

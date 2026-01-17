@@ -2,7 +2,10 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import RalphStatus from '../components/RalphStatus';
 import ConfirmDialog from '../components/ConfirmDialog';
+import DeleteDialog from '../components/DeleteDialog';
 import Terminal from '../components/Terminal';
+
+type DeletionMode = 'folder-only' | 'with-local-branch' | 'everything';
 
 interface SessionDetail {
   id: string;
@@ -16,7 +19,6 @@ interface SessionDetail {
   startedAt: string;
   lastHeartbeat: string;
   stuckReason?: string;
-  forwardedMessage?: string;
   pullRequestUrl?: string;
   /** Spawn ID for PTY terminal connection */
   spawnId?: string;
@@ -29,9 +31,8 @@ interface SessionDetail {
   };
 }
 
-interface DeleteDialogState {
+interface ForceDeleteDialogState {
   isOpen: boolean;
-  showForceOption?: boolean;
   error?: string;
 }
 
@@ -43,9 +44,12 @@ function SessionView() {
   const navigate = useNavigate();
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState('');
-  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState>({ isOpen: false });
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [forceDeleteDialog, setForceDeleteDialog] = useState<ForceDeleteDialogState>({ isOpen: false });
   const [deleted, setDeleted] = useState(false);
+  const [actionLoading, setActionLoading] = useState<'pause' | 'resume' | null>(null);
+  const [retryingDelete, setRetryingDelete] = useState(false);
+  const [rollingBack, setRollingBack] = useState(false);
 
   useEffect(() => {
     if (deleted) return; // Stop polling after deletion
@@ -71,26 +75,8 @@ function SessionView() {
     return () => clearInterval(interval);
   }, [repoId, sessionId, deleted]);
 
-  const handleForward = async () => {
-    if (!message.trim()) return;
-    try {
-      const res = await fetch(`/api/sessions/${repoId}/${sessionId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'forward', message }),
-      });
-      if (res.ok) {
-        setMessage('');
-        // Refresh session
-        const data = await res.json();
-        setSession(data.session);
-      }
-    } catch (err) {
-      console.error('Failed to forward message:', err);
-    }
-  };
-
   const handleAction = async (action: 'pause' | 'resume') => {
+    setActionLoading(action);
     try {
       const res = await fetch(`/api/sessions/${repoId}/${sessionId}`, {
         method: 'PATCH',
@@ -103,12 +89,15 @@ function SessionView() {
       }
     } catch (err) {
       console.error(`Failed to ${action} session:`, err);
+    } finally {
+      setActionLoading(null);
     }
   };
 
-  const handleDelete = async (force?: boolean) => {
+  const handleDelete = async (mode: DeletionMode, force?: boolean) => {
     try {
       const url = new URL(`/api/sessions/${repoId}/${sessionId}`, window.location.origin);
+      url.searchParams.set('deletionMode', mode);
       if (force) url.searchParams.set('force', 'true');
 
       const res = await fetch(url.toString(), { method: 'DELETE' });
@@ -116,22 +105,25 @@ function SessionView() {
 
       if (res.ok && data.success) {
         setDeleted(true);
-        setDeleteDialog({ isOpen: false });
+        setDeleteDialogOpen(false);
+        setForceDeleteDialog({ isOpen: false });
         navigate('/');
       } else if (data.deletionFailed) {
-        setDeleteDialog({
+        setDeleteDialogOpen(false);
+        setForceDeleteDialog({
           isOpen: true,
-          showForceOption: true,
           error: data.error,
         });
       }
     } catch (err) {
       console.error('Failed to delete session:', err);
-      setDeleteDialog({ isOpen: false });
+      setDeleteDialogOpen(false);
+      setForceDeleteDialog({ isOpen: false });
     }
   };
 
   const handleRetryDelete = async () => {
+    setRetryingDelete(true);
     try {
       const res = await fetch(`/api/sessions/${repoId}/${sessionId}/retry-delete`, {
         method: 'PATCH',
@@ -142,10 +134,13 @@ function SessionView() {
       }
     } catch (err) {
       console.error('Failed to retry deletion:', err);
+    } finally {
+      setRetryingDelete(false);
     }
   };
 
   const handleRollbackDelete = async () => {
+    setRollingBack(true);
     try {
       const res = await fetch(`/api/sessions/${repoId}/${sessionId}/rollback-delete`, {
         method: 'PATCH',
@@ -156,6 +151,8 @@ function SessionView() {
       }
     } catch (err) {
       console.error('Failed to rollback deletion:', err);
+    } finally {
+      setRollingBack(false);
     }
   };
 
@@ -202,7 +199,7 @@ function SessionView() {
 
       {/* Info Grid */}
       <div className="grid grid-cols-2 gap-6">
-        <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+        <div className="bg-ppds-card rounded-lg p-4 space-y-3">
           <h2 className="text-lg font-semibold text-white">Details</h2>
           <div>
             <div className="text-sm text-ppds-muted">Issue Title</div>
@@ -235,7 +232,7 @@ function SessionView() {
           )}
         </div>
 
-        <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+        <div className="bg-ppds-card rounded-lg p-4 space-y-3">
           <h2 className="text-lg font-semibold text-white">Git Status</h2>
           {session.worktreeStatus ? (
             <>
@@ -282,7 +279,7 @@ function SessionView() {
 
       {/* Live Terminal (when spawnId is available) */}
       {session.spawnId && (
-        <div className="bg-gray-800 rounded-lg p-4">
+        <div className="bg-ppds-card rounded-lg p-4">
           <h2 className="text-lg font-semibold text-white mb-3">
             Live Terminal
           </h2>
@@ -301,50 +298,23 @@ function SessionView() {
         </div>
       )}
 
-      {/* Forward Message */}
-      <div className="bg-gray-800 rounded-lg p-4">
-        <h2 className="text-lg font-semibold text-white mb-3">
-          Forward Message to Worker
-        </h2>
-        {session.forwardedMessage && (
-          <div className="bg-yellow-900/30 border border-yellow-700 rounded p-3 mb-3 text-sm">
-            <span className="text-yellow-400">Pending message:</span>{' '}
-            <span className="text-yellow-200">{session.forwardedMessage}</span>
-          </div>
-        )}
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="Enter guidance for the worker..."
-            className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
-          />
-          <button
-            onClick={handleForward}
-            disabled={!message.trim()}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Send
-          </button>
-        </div>
-      </div>
-
       {/* Actions */}
       <div className="flex gap-3">
         {session.status === 'deletion_failed' ? (
           <>
             <button
               onClick={handleRetryDelete}
-              className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-500"
+              disabled={retryingDelete || rollingBack}
+              className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Retry Delete
+              {retryingDelete ? 'Retrying...' : 'Retry Delete'}
             </button>
             <button
               onClick={handleRollbackDelete}
-              className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-500"
+              disabled={retryingDelete || rollingBack}
+              className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Cancel Delete
+              {rollingBack ? 'Rolling Back...' : 'Cancel Delete'}
             </button>
           </>
         ) : (
@@ -352,22 +322,25 @@ function SessionView() {
             {session.status === 'paused' ? (
               <button
                 onClick={() => handleAction('resume')}
-                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500"
+                disabled={actionLoading !== null}
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Resume
+                {actionLoading === 'resume' ? 'Resuming...' : 'Resume'}
               </button>
             ) : session.status !== 'deleting' && (
               <button
                 onClick={() => handleAction('pause')}
-                className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-500"
+                disabled={actionLoading !== null}
+                className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Pause
+                {actionLoading === 'pause' ? 'Pausing...' : 'Pause'}
               </button>
             )}
             {session.status !== 'deleting' && (
               <button
-                onClick={() => setDeleteDialog({ isOpen: true })}
-                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500"
+                onClick={() => setDeleteDialogOpen(true)}
+                disabled={actionLoading !== null}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Delete
               </button>
@@ -381,19 +354,24 @@ function SessionView() {
         )}
       </div>
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Dialog with Mode Selection */}
+      <DeleteDialog
+        isOpen={deleteDialogOpen}
+        repoId={repoId!}
+        sessionId={sessionId!}
+        onConfirm={(mode) => handleDelete(mode)}
+        onCancel={() => setDeleteDialogOpen(false)}
+      />
+
+      {/* Force Delete Confirmation (when normal delete fails) */}
       <ConfirmDialog
-        isOpen={deleteDialog.isOpen}
-        title={deleteDialog.showForceOption ? 'Deletion Failed' : 'Delete Session'}
-        message={
-          deleteDialog.showForceOption
-            ? `Worktree cleanup failed: ${deleteDialog.error || 'Unknown error'}. Force delete will remove the session but leave the worktree orphaned.`
-            : 'Are you sure you want to delete this session? This will remove the worktree and all uncommitted changes.'
-        }
-        confirmLabel={deleteDialog.showForceOption ? 'Force Delete' : 'Delete'}
+        isOpen={forceDeleteDialog.isOpen}
+        title="Deletion Failed"
+        message={`Worktree cleanup failed: ${forceDeleteDialog.error || 'Unknown error'}. Force delete will remove the session but leave the worktree orphaned.`}
+        confirmLabel="Force Delete"
         variant="danger"
-        onConfirm={() => handleDelete(deleteDialog.showForceOption)}
-        onCancel={() => setDeleteDialog({ isOpen: false })}
+        onConfirm={() => handleDelete('folder-only', true)}
+        onCancel={() => setForceDeleteDialog({ isOpen: false })}
       />
     </div>
   );

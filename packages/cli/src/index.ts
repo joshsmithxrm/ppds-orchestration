@@ -6,10 +6,8 @@ import { spawnCommand } from './commands/spawn.js';
 import { listCommand } from './commands/list.js';
 import { getCommand } from './commands/get.js';
 import { updateCommand } from './commands/update.js';
-import { forwardCommand } from './commands/forward.js';
 import { cancelCommand } from './commands/cancel.js';
 import { heartbeatCommand } from './commands/heartbeat.js';
-import { ackCommand } from './commands/ack.js';
 import { pauseCommand } from './commands/pause.js';
 import { resumeCommand } from './commands/resume.js';
 import { restartCommand } from './commands/restart.js';
@@ -79,17 +77,10 @@ program
   .option('--pr <url>', 'Pull request URL')
   .action(withErrorHandling(updateCommand));
 
-// forward command
-program
-  .command('forward <session> <message>')
-  .description('Forward guidance to a worker')
-  .action(withErrorHandling(forwardCommand));
-
 // cancel command
 program
   .command('cancel <session>')
   .description('Cancel a session')
-  .option('--keep-worktree', 'Keep the worktree for debugging')
   .action(withErrorHandling(cancelCommand));
 
 // delete-all command (formerly cancel-all)
@@ -97,15 +88,16 @@ program
   .command('delete-all')
   .alias('cancel-all')
   .description('Delete all active sessions')
-  .option('--keep-worktrees', 'Keep worktrees for debugging')
-  .action(withErrorHandling(async (options: { keepWorktrees?: boolean }) => {
+  .option('--mode <mode>', 'Deletion mode: folder-only, with-local-branch, everything')
+  .action(withErrorHandling(async (options: { mode?: string }) => {
     const { createSessionService, isTerminalStatus } = await import('@ppds-orchestration/core');
     const service = await createSessionService();
     const sessions = await service.list();
     const activeSessions = sessions.filter(s => !isTerminalStatus(s.status));
+    const deletionMode = (options.mode ?? 'folder-only') as 'folder-only' | 'with-local-branch' | 'everything';
     let count = 0;
     for (const session of activeSessions) {
-      await service.delete(session.id, { keepWorktree: options.keepWorktrees });
+      await service.delete(session.id, { deletionMode });
       count++;
     }
     console.log(chalk.yellow(`Deleted ${count} session(s)`));
@@ -119,12 +111,6 @@ program
   .action(withErrorHandling(async (session: string, options: { quiet?: boolean }) => {
     await heartbeatCommand(session, { quiet: options.quiet });
   }));
-
-// ack command
-program
-  .command('ack <session>')
-  .description('Acknowledge a forwarded message')
-  .action(withErrorHandling(ackCommand));
 
 // pause command
 program
@@ -148,7 +134,7 @@ program
 program
   .command('delete <session>')
   .description('Delete a session from the list')
-  .option('--keep-worktree', 'Keep the worktree')
+  .option('--mode <mode>', 'Deletion mode: folder-only, with-local-branch, everything')
   .action(withErrorHandling(deleteCommand));
 
 // dashboard command

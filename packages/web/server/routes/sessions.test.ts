@@ -8,7 +8,6 @@ const mockMultiRepoService = {
   listAllSessions: vi.fn(),
   getSessionWithStatus: vi.fn(),
   spawn: vi.fn(),
-  forward: vi.fn(),
   pause: vi.fn(),
   resume: vi.fn(),
   delete: vi.fn(),
@@ -208,32 +207,6 @@ describe('Sessions API', () => {
   });
 
   describe('PATCH /api/sessions/:repoId/:sessionId', () => {
-    it('forwards a message', async () => {
-      const mockSession = {
-        id: '123',
-        forwardedMessage: 'Test message',
-      };
-      mockMultiRepoService.forward.mockResolvedValue(mockSession);
-
-      const app = createApp();
-      const response = await request(app)
-        .patch('/api/sessions/repo-1/123')
-        .send({ action: 'forward', message: 'Test message' });
-
-      expect(response.status).toBe(200);
-      expect(mockMultiRepoService.forward).toHaveBeenCalledWith('repo-1', '123', 'Test message');
-    });
-
-    it('returns 400 when message missing for forward', async () => {
-      const app = createApp();
-      const response = await request(app)
-        .patch('/api/sessions/repo-1/123')
-        .send({ action: 'forward' });
-
-      expect(response.status).toBe(400);
-      expect(response.body.error).toBe('message is required for forward action');
-    });
-
     it('pauses a session', async () => {
       const mockSession = { id: '123', status: 'paused' };
       mockMultiRepoService.pause.mockResolvedValue(mockSession);
@@ -303,7 +276,7 @@ describe('Sessions API', () => {
   });
 
   describe('DELETE /api/sessions/:repoId/:sessionId', () => {
-    it('deletes a session', async () => {
+    it('deletes a session with default mode', async () => {
       mockMultiRepoService.delete.mockResolvedValue({ success: true, sessionDeleted: true, worktreeRemoved: true });
 
       const app = createApp();
@@ -311,17 +284,17 @@ describe('Sessions API', () => {
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
-      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123', { keepWorktree: false, force: false });
+      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123', { force: false, deletionMode: 'folder-only' });
     });
 
-    it('keeps worktree when requested', async () => {
+    it('deletes with everything mode when requested', async () => {
       mockMultiRepoService.delete.mockResolvedValue({ success: true, sessionDeleted: true, worktreeRemoved: true });
 
       const app = createApp();
-      const response = await request(app).delete('/api/sessions/repo-1/123?keepWorktree=true');
+      const response = await request(app).delete('/api/sessions/repo-1/123?deletionMode=everything');
 
       expect(response.status).toBe(200);
-      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123', { keepWorktree: true, force: false });
+      expect(mockMultiRepoService.delete).toHaveBeenCalledWith('repo-1', '123', { force: false, deletionMode: 'everything' });
     });
   });
 });

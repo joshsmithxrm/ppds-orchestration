@@ -111,9 +111,6 @@ export const SessionState = z.object({
   /** Reason for stuck status (undefined unless status is 'stuck'). */
   stuckReason: z.string().optional(),
 
-  /** Message forwarded from orchestrator (undefined if none pending). */
-  forwardedMessage: z.string().optional(),
-
   /** Pull request URL (undefined until PR is created). */
   pullRequestUrl: z.string().url().optional(),
 
@@ -183,15 +180,12 @@ export const SessionContext = z.object({
 export type SessionContext = z.infer<typeof SessionContext>;
 
 /**
- * Dynamic state written to the worktree for message forwarding.
+ * Dynamic state written to the worktree.
  * Orchestrator writes this; workers read it.
  */
 export const SessionDynamicState = z.object({
   /** Current status. */
   status: SessionStatus,
-
-  /** Message forwarded from orchestrator. */
-  forwardedMessage: z.string().nullable().optional(),
 
   /** When this was last updated (ISO timestamp). */
   lastUpdated: z.string().datetime(),

@@ -49,9 +49,9 @@ When a worker hits a domain gate or fails repeatedly:
 1. Worker sets `status: stuck` with `stuckReason`
 2. **Worker exits** (does not poll or wait)
 3. Session remains in stuck state
-4. Human reviews reason and provides guidance
+4. Human reviews reason
 5. Human runs `orch restart` to spawn fresh worker
-6. New worker sees forwarded guidance, continues work
+6. New worker continues work from preserved worktree state
 
 ## Key Decision: Stuck Workers Exit
 
@@ -59,7 +59,7 @@ When a worker hits a domain gate or fails repeatedly:
 
 **Option A: Worker polls for guidance (Rejected)**
 ```
-stuck ──► [poll every 30s] ──► [check forwardedMessage] ──► continue
+stuck ──► [poll every 30s] ──► [check for updates] ──► continue
 ```
 
 Problems:
@@ -70,7 +70,7 @@ Problems:
 
 **Option B: Worker exits, fresh restart (Chosen)**
 ```
-stuck ──► [exit] ──► [human: orch forward + orch restart] ──► [new worker]
+stuck ──► [exit] ──► [human: orch restart] ──► [new worker]
 ```
 
 Benefits:
@@ -87,18 +87,14 @@ Benefits:
 orch list
 # [!] #42 - STUCK - Auth decision needed: JWT or session tokens?
 
-# 2. Human provides guidance
-orch forward 42 "Use JWT tokens with 1-hour expiry"
-
-# 3. Human restarts
+# 2. Human restarts (optionally after updating issue/context)
 orch restart 42
 # ✓ Session restarted
 ```
 
 The new worker:
 - Spawns in existing worktree (code preserved)
-- Sees `forwardedMessage` in session file
-- Incorporates guidance (per ADR-001, doesn't know why it exists)
+- Has fresh context from session-prompt.md
 - Continues work from current state
 
 ## State Persistence
@@ -123,7 +119,6 @@ Completed Sessions (1):
 | pause | ❌ | ❌ | ✓ | ✓ |
 | cancel | ❌ | ❌ | ✓ | ✓ |
 | restart | ❌ | ❌ | ✓ | ❌ |
-| forward | ❌ | ❌ | ✓ | ✓ |
 | delete | ✓ | ✓ | ✓ | ✓ |
 
 Rationale:

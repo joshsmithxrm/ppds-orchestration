@@ -273,8 +273,11 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
       // This simulates the user typing the prompt after Claude opens
       ptyManager.write(spawnId, request.promptContent);
 
-      // Press Enter to submit the prompt
-      ptyManager.write(spawnId, '\r');
+      // Small delay to ensure prompt is fully written before pressing Enter
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Press Enter to submit the prompt (use \r\n for Windows compatibility)
+      ptyManager.write(spawnId, '\r\n');
 
       return {
         success: true,

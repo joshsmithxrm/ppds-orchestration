@@ -101,37 +101,6 @@ describe('SessionService', () => {
     });
   });
 
-  describe('forward', () => {
-    it('should forward message to session', async () => {
-      // Create a session file directly
-      const sessionsDir = path.join(tempDir, 'test-project', 'sessions');
-      fs.mkdirSync(sessionsDir, { recursive: true });
-
-      const worktreePath = path.join(tempDir, 'test-worktree');
-      fs.mkdirSync(worktreePath, { recursive: true });
-
-      const session: SessionState = {
-        ...createTestSession('123', 123, worktreePath),
-        status: 'stuck',
-        stuckReason: 'Need guidance',
-      };
-
-      fs.writeFileSync(
-        path.join(sessionsDir, 'work-123.json'),
-        JSON.stringify(session)
-      );
-
-      const updated = await service.forward('123', 'Use option A');
-
-      expect(updated.forwardedMessage).toBe('Use option A');
-
-      // Check that session-state.json was updated in worktree
-      const stateFile = path.join(worktreePath, 'session-state.json');
-      const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
-      expect(state.forwardedMessage).toBe('Use option A');
-    });
-  });
-
   describe('pause and resume', () => {
     let sessionsDir: string;
     let worktreePath: string;
@@ -203,28 +172,6 @@ describe('SessionService', () => {
 
       // Session file should be deleted
       expect(fs.existsSync(path.join(sessionsDir, 'work-123.json'))).toBe(false);
-    });
-
-    it('should keep worktree when keepWorktree option is true', async () => {
-      const sessionsDir = path.join(tempDir, 'test-project', 'sessions');
-      fs.mkdirSync(sessionsDir, { recursive: true });
-
-      const worktreePath = path.join(tempDir, 'test-worktree');
-      fs.mkdirSync(worktreePath, { recursive: true });
-      fs.writeFileSync(path.join(worktreePath, 'test-file.txt'), 'test');
-
-      const session = createTestSession('123', 123, worktreePath);
-
-      fs.writeFileSync(
-        path.join(sessionsDir, 'work-123.json'),
-        JSON.stringify(session)
-      );
-
-      await service.delete('123', { keepWorktree: true });
-
-      // Worktree directory should still exist
-      // (In real usage, git worktree remove would be called, but we're not testing that)
-      expect(fs.existsSync(worktreePath)).toBe(true);
     });
 
     it('should throw if session not found', async () => {

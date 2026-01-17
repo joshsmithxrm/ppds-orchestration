@@ -7,6 +7,7 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: 'danger' | 'warning' | 'default';
+  loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -18,6 +19,7 @@ export default function ConfirmDialog({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   variant = 'default',
+  loading = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -67,7 +69,7 @@ export default function ConfirmDialog({
       aria-labelledby="confirm-dialog-title"
     >
       <div
-        className="bg-ppds-card rounded-lg p-6 w-full max-w-sm border border-gray-700 shadow-xl"
+        className="bg-ppds-card rounded-lg p-6 w-full max-w-sm border border-ppds-surface shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-4">
@@ -91,16 +93,18 @@ export default function ConfirmDialog({
         <div className="mt-6 flex justify-end gap-3">
           <button
             onClick={onCancel}
-            className="px-4 py-2 text-ppds-muted hover:text-white hover:bg-gray-700 rounded transition-colors"
+            disabled={loading}
+            className="px-4 py-2 text-ppds-muted hover:text-white hover:bg-ppds-surface rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {cancelLabel}
           </button>
           <button
             ref={confirmButtonRef}
             onClick={onConfirm}
-            className={`px-4 py-2 font-medium rounded transition-colors ${styles.button}`}
+            disabled={loading}
+            className={`px-4 py-2 font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${styles.button}`}
           >
-            {confirmLabel}
+            {loading ? 'Processing...' : confirmLabel}
           </button>
         </div>
       </div>

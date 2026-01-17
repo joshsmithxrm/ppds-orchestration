@@ -9,8 +9,8 @@ function SoundToggle({ enabled, onToggle }: SoundToggleProps) {
       onClick={onToggle}
       className={`p-2 rounded transition-colors ${
         enabled
-          ? 'text-green-400 hover:text-green-300 hover:bg-gray-700'
-          : 'text-gray-500 hover:text-gray-400 hover:bg-gray-700'
+          ? 'text-green-400 hover:text-green-300 hover:bg-ppds-surface'
+          : 'text-gray-500 hover:text-gray-400 hover:bg-ppds-surface'
       }`}
       title={enabled ? 'Sounds enabled (click to mute)' : 'Sounds disabled (click to unmute)'}
     >

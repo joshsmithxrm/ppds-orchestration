@@ -194,7 +194,6 @@ describe('SessionStore', () => {
     it('should write and read session state', async () => {
       const state: SessionDynamicState = {
         status: 'working',
-        forwardedMessage: 'Test message',
         lastUpdated: new Date().toISOString(),
       };
 

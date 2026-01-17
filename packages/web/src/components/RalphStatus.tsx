@@ -53,6 +53,7 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
   const [state, setState] = useState<RalphLoopState | null>(null);
   const [loading, setLoading] = useState(true);
   const [continuing, setContinuing] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchState = async () => {
@@ -103,6 +104,7 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
   };
 
   const handleStart = async () => {
+    setStarting(true);
     try {
       const res = await fetch(`/api/ralph/${repoId}/${sessionId}/start`, {
         method: 'POST',
@@ -116,12 +118,14 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
     } catch (err) {
       setError('Failed to start loop');
       console.error('Failed to start:', err);
+    } finally {
+      setStarting(false);
     }
   };
 
   if (loading) {
     return (
-      <div className="bg-gray-800 rounded-lg p-4">
+      <div className="bg-ppds-card rounded-lg p-4">
         <h3 className="text-lg font-semibold text-white mb-2">Ralph Loop</h3>
         <p className="text-gray-400">Loading...</p>
       </div>
@@ -130,14 +134,15 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
 
   if (!state) {
     return (
-      <div className="bg-gray-800 rounded-lg p-4">
+      <div className="bg-ppds-card rounded-lg p-4">
         <h3 className="text-lg font-semibold text-white mb-2">Ralph Loop</h3>
         <p className="text-gray-400 mb-3">No active Ralph loop for this session.</p>
         <button
           onClick={handleStart}
-          className="px-4 py-2 bg-ppds-ralph text-white rounded hover:bg-ppds-ralph/80 transition-colors text-sm"
+          disabled={starting}
+          className="px-4 py-2 bg-ppds-ralph text-white rounded hover:bg-ppds-ralph/80 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Start Ralph Loop
+          {starting ? 'Starting...' : 'Start Ralph Loop'}
         </button>
       </div>
     );
@@ -148,7 +153,7 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
   );
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 space-y-4">
+    <div className="bg-ppds-card rounded-lg p-4 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold text-white">Ralph Loop</h3>
@@ -169,7 +174,7 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
           </span>
           <span>{progressPercent}%</span>
         </div>
-        <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
+        <div className="w-full bg-ppds-surface rounded-full h-2 overflow-hidden">
           <div
             className="bg-ppds-ralph h-2 rounded-full transition-all duration-300"
             style={{ width: `${progressPercent}%` }}
@@ -188,7 +193,7 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
               .map((iter) => (
                 <div
                   key={iter.iteration}
-                  className="flex items-center justify-between text-xs bg-gray-700/50 rounded px-2 py-1"
+                  className="flex items-center justify-between text-xs bg-ppds-surface/50 rounded px-2 py-1"
                 >
                   <span className="text-gray-300">#{iter.iteration}</span>
                   <span
@@ -220,7 +225,7 @@ function RalphStatus({ repoId, sessionId }: RalphStatusProps) {
       {state.config.gitOperations && (
         <div>
           <h4 className="text-sm text-gray-400 mb-2">Git Operations</h4>
-          <div className="bg-gray-700/50 rounded p-2 space-y-2">
+          <div className="bg-ppds-surface/50 rounded p-2 space-y-2">
             {/* Config */}
             <div className="flex flex-wrap gap-2 text-xs">
               <span

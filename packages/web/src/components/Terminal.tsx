@@ -45,10 +45,10 @@ export function Terminal({ sessionId, className = '', onExit, showStatus = true 
   }, [fit, containerRef]);
 
   return (
-    <div className={`flex flex-col bg-[#1a1a1a] rounded-lg overflow-hidden ${className}`}>
+    <div className={`flex flex-col bg-ppds-card rounded-lg overflow-hidden ${className}`}>
       {/* Status bar */}
       {showStatus && (
-        <div className="flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700 text-xs">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-ppds-surface border-b border-ppds-surface text-xs">
           <div className="flex items-center gap-2">
             <span className="text-gray-400 font-mono">{sessionId.slice(0, 8)}...</span>
             {connected ? (
@@ -86,7 +86,7 @@ export function Terminal({ sessionId, className = '', onExit, showStatus = true 
       />
 
       {/* Keyboard hint */}
-      <div className="px-3 py-1 bg-gray-800 border-t border-gray-700 text-xs text-gray-500">
+      <div className="px-3 py-1 bg-ppds-surface border-t border-ppds-surface text-xs text-gray-500">
         Click to focus. Type to send input to the session.
       </div>
     </div>

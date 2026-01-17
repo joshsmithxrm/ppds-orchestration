@@ -165,7 +165,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
                 className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
                   mode === 'manual'
                     ? 'bg-ppds-accent text-ppds-bg'
-                    : 'bg-ppds-bg text-ppds-muted hover:bg-gray-700'
+                    : 'bg-ppds-bg text-ppds-muted hover:bg-ppds-surface'
                 }`}
               >
                 Manual
@@ -176,7 +176,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
                 className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
                   mode === 'autonomous'
                     ? 'bg-ppds-ralph text-white'
-                    : 'bg-ppds-bg text-ppds-muted hover:bg-gray-700'
+                    : 'bg-ppds-bg text-ppds-muted hover:bg-ppds-surface'
                 }`}
               >
                 Autonomous
@@ -220,7 +220,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-ppds-muted hover:text-white hover:bg-gray-700 rounded transition-colors"
+              className="px-4 py-2 text-ppds-muted hover:text-white hover:bg-ppds-surface rounded transition-colors"
             >
               Cancel
             </button>

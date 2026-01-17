@@ -7,10 +7,11 @@ export default {
   theme: {
     extend: {
       colors: {
-        // PPDS brand colors (from ppds-docs branding)
-        'ppds-bg': '#1e1e1e',
-        'ppds-card': '#252525',
-        'ppds-header': '#141414',
+        // PPDS brand colors - pure black theme
+        'ppds-bg': '#000000',
+        'ppds-card': '#0a0a0a',
+        'ppds-header': '#000000',
+        'ppds-surface': '#111111',  // borders, secondary surfaces
         'ppds-accent': '#25c2a0',
         'ppds-muted': '#8b949e',
         'ppds-ralph': '#a855f7',  // purple-500 - Ralph mode indicator

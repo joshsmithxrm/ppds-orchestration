@@ -146,7 +146,7 @@ function Settings() {
           <div className="flex gap-2">
             <button
               onClick={handleCancel}
-              className="px-4 py-2 text-ppds-muted hover:text-white hover:bg-gray-700 rounded transition-colors"
+              className="px-4 py-2 text-ppds-muted hover:text-white hover:bg-ppds-surface rounded transition-colors"
             >
               Cancel
             </button>
@@ -164,7 +164,7 @@ function Settings() {
       {/* Config Path */}
       <div className="text-sm text-gray-400">
         Config file:{' '}
-        <code className="text-gray-300 bg-gray-800 px-2 py-0.5 rounded">
+        <code className="text-gray-300 bg-ppds-card px-2 py-0.5 rounded">
           {configPath}
         </code>
       </div>
@@ -182,7 +182,7 @@ function Settings() {
       )}
 
       {/* Config View/Edit */}
-      <div className="bg-gray-800 rounded-lg overflow-hidden">
+      <div className="bg-ppds-card rounded-lg overflow-hidden">
         {editMode ? (
           <div className="relative">
             <div className="absolute top-2 right-2 text-xs text-gray-500">
@@ -207,7 +207,7 @@ function Settings() {
                   {Object.entries(config.repos).map(([id, repo]) => (
                     <div
                       key={id}
-                      className="bg-gray-700/50 rounded p-3 space-y-1"
+                      className="bg-ppds-surface/50 rounded p-3 space-y-1"
                     >
                       <div className="font-medium text-white">{id}</div>
                       <div className="text-sm text-gray-400 font-mono">
@@ -253,7 +253,7 @@ function Settings() {
                       <span className="text-gray-500 mx-2">
                         ({hook.type})
                       </span>
-                      <code className="text-gray-300 text-xs bg-gray-700 px-2 py-0.5 rounded">
+                      <code className="text-gray-300 text-xs bg-ppds-surface px-2 py-0.5 rounded">
                         {hook.value.length > 60
                           ? hook.value.slice(0, 60) + '...'
                           : hook.value}
@@ -335,7 +335,7 @@ function Settings() {
               </h2>
               <div className="text-sm">
                 <span className="text-gray-500">Command:</span>{' '}
-                <code className="text-white bg-gray-700 px-2 py-0.5 rounded">
+                <code className="text-white bg-ppds-surface px-2 py-0.5 rounded">
                   {config?.cliCommand || 'orch'}
                 </code>
               </div>

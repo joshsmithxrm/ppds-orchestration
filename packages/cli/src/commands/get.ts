@@ -59,11 +59,6 @@ export async function getCommand(sessionId: string, options: { json?: boolean })
     console.log(chalk.red(`  Stuck: ${session.stuckReason}`));
   }
 
-  if (session.forwardedMessage) {
-    console.log();
-    console.log(chalk.yellow(`  Forwarded: ${session.forwardedMessage}`));
-  }
-
   if (session.pullRequestUrl) {
     console.log();
     console.log(chalk.blue(`  PR: ${session.pullRequestUrl}`));

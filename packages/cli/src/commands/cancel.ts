@@ -1,10 +1,7 @@
 import chalk from 'chalk';
 import { createSessionService, formatIssues } from '@ppds-orchestration/core';
 
-export async function cancelCommand(
-  sessionId: string,
-  options: { keepWorktree?: boolean }
-): Promise<void> {
+export async function cancelCommand(sessionId: string): Promise<void> {
   const service = await createSessionService();
 
   // Get session first to show issue numbers
@@ -14,11 +11,7 @@ export async function cancelCommand(
   }
 
   // cancel is now an alias for delete
-  await service.delete(sessionId, { keepWorktree: options.keepWorktree });
+  await service.delete(sessionId);
 
   console.log(chalk.yellow(`\u2713 Session ${formatIssues(session)} deleted`));
-
-  if (options.keepWorktree) {
-    console.log(`  Worktree preserved at: ${session.worktreePath}`);
-  }
 }
