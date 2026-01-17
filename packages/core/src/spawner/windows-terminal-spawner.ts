@@ -284,10 +284,13 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
           error: 'Claude Code did not become ready within timeout (15s)',
         };
       }
-      console.log(`[PTY:${shortId}] Claude is ready, waiting 500ms for UI to settle...`);
+      console.log(`[PTY:${shortId}] Claude is ready, waiting 1500ms for input handlers to attach...`);
 
-      // Longer delay for UI to fully settle after detecting readiness
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait for Ink/React input handlers to attach after UI renders.
+      // The ❯ prompt appears when rendering completes, but event handlers
+      // may not be wired up yet. Without this delay, Enter keypresses can
+      // be lost or treated as text input instead of submission.
+      await new Promise(resolve => setTimeout(resolve, 1500));
 
       // Send the prompt via PTY stdin (avoids command-line length limits)
       // This simulates the user typing the prompt after Claude opens
