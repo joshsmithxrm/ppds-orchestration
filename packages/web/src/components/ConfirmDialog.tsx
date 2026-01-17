@@ -33,13 +33,13 @@ export default function ConfirmDialog({
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (e.key === 'Escape' && isOpen && !loading) {
         onCancel();
       }
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [isOpen, onCancel]);
+  }, [isOpen, onCancel, loading]);
 
   if (!isOpen) return null;
 
@@ -63,7 +63,7 @@ export default function ConfirmDialog({
   return (
     <div
       className="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
-      onClick={onCancel}
+      onClick={loading ? undefined : onCancel}
       role="dialog"
       aria-modal="true"
       aria-labelledby="confirm-dialog-title"

@@ -12,6 +12,7 @@ interface DeleteDialogProps {
   isOpen: boolean;
   repoId: string;
   sessionId: string;
+  deleting?: boolean;
   onConfirm: (mode: DeletionMode) => void;
   onCancel: () => void;
 }
@@ -20,6 +21,7 @@ export default function DeleteDialog({
   isOpen,
   repoId,
   sessionId,
+  deleting = false,
   onConfirm,
   onCancel,
 }: DeleteDialogProps) {
@@ -41,13 +43,13 @@ export default function DeleteDialog({
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (e.key === 'Escape' && isOpen && !deleting) {
         onCancel();
       }
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [isOpen, onCancel]);
+  }, [isOpen, onCancel, deleting]);
 
   const fetchWorktreeState = async () => {
     setLoading(true);
@@ -71,7 +73,7 @@ export default function DeleteDialog({
   return (
     <div
       className="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
-      onClick={onCancel}
+      onClick={deleting ? undefined : onCancel}
       role="dialog"
       aria-modal="true"
       aria-labelledby="delete-dialog-title"
@@ -128,7 +130,7 @@ export default function DeleteDialog({
         ) : null}
 
         {/* Deletion Mode */}
-        <div className="mt-4">
+        <div className={`mt-4 ${deleting ? 'opacity-50 pointer-events-none' : ''}`}>
           <label className="block text-sm text-ppds-muted mb-2">Deletion Mode</label>
           <div className="space-y-2">
             <label className="flex items-start gap-3 p-2 rounded hover:bg-ppds-surface cursor-pointer">
@@ -138,6 +140,7 @@ export default function DeleteDialog({
                 value="folder-only"
                 checked={mode === 'folder-only'}
                 onChange={() => setMode('folder-only')}
+                disabled={deleting}
                 className="mt-0.5"
               />
               <div>
@@ -152,6 +155,7 @@ export default function DeleteDialog({
                 value="with-local-branch"
                 checked={mode === 'with-local-branch'}
                 onChange={() => setMode('with-local-branch')}
+                disabled={deleting}
                 className="mt-0.5"
               />
               <div>
@@ -166,6 +170,7 @@ export default function DeleteDialog({
                 value="everything"
                 checked={mode === 'everything'}
                 onChange={() => setMode('everything')}
+                disabled={deleting}
                 className="mt-0.5"
               />
               <div>
@@ -180,16 +185,18 @@ export default function DeleteDialog({
         <div className="mt-6 flex justify-end gap-3">
           <button
             onClick={onCancel}
-            className="px-4 py-2 text-ppds-muted hover:text-white hover:bg-ppds-surface rounded transition-colors"
+            disabled={deleting}
+            className="px-4 py-2 text-ppds-muted hover:text-white hover:bg-ppds-surface rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-ppds-muted"
           >
             Cancel
           </button>
           <button
             ref={confirmButtonRef}
             onClick={() => onConfirm(mode)}
-            className="px-4 py-2 font-medium rounded transition-colors bg-red-600 hover:bg-red-500 text-white"
+            disabled={deleting}
+            className="px-4 py-2 font-medium rounded transition-colors bg-red-600 hover:bg-red-500 text-white disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600"
           >
-            Delete
+            {deleting ? 'Deleting...' : 'Delete'}
           </button>
         </div>
       </div>

@@ -453,20 +453,41 @@ export class SessionService {
     // Save previous status for potential rollback
     const previousStatus = session.status;
 
-    // For active sessions, first set status to 'cancelled' to trigger the
-    // session-watcher to kill the Claude process
+    // For active sessions, stop the worker process before cleanup
     const activeStatuses = ['registered', 'planning', 'planning_complete', 'working', 'shipping', 'reviews_in_progress', 'pr_ready', 'stuck', 'paused'];
     if (activeStatuses.includes(session.status)) {
+      // If session has a spawn ID, stop the worker process
+      if (session.spawnId) {
+        try {
+          // Request process termination
+          await this.spawner.stop(session.spawnId);
+
+          // Wait for process to exit with 5 second timeout
+          const startTime = Date.now();
+          while (Date.now() - startTime < 5000) {
+            const status = await this.spawner.getStatus(session.spawnId);
+            if (!status.running) break;
+            await new Promise(r => setTimeout(r, 500));
+          }
+
+          // Log warning if still running (but proceed anyway per user preference)
+          const finalStatus = await this.spawner.getStatus(session.spawnId);
+          if (finalStatus.running) {
+            console.warn(`Process ${session.spawnId} still running after 5s timeout, proceeding with deletion`);
+          }
+        } catch (error) {
+          // Log but don't fail - process may have already exited
+          console.warn(`Error stopping worker process: ${error instanceof Error ? error.message : error}`);
+        }
+      }
+
+      // Set status to cancelled
       const cancelledSession: SessionState = {
         ...session,
         status: 'cancelled',
         lastHeartbeat: new Date().toISOString(),
       };
       await this.store.save(cancelledSession);
-
-      // Wait for the session-watcher to detect the status change and kill the process
-      // The watcher polls every 1 second, so 2 seconds should be enough
-      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
     // Transition to deleting state

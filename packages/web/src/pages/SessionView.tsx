@@ -47,6 +47,7 @@ function SessionView() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [forceDeleteDialog, setForceDeleteDialog] = useState<ForceDeleteDialogState>({ isOpen: false });
   const [deleted, setDeleted] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [actionLoading, setActionLoading] = useState<'pause' | 'resume' | null>(null);
   const [retryingDelete, setRetryingDelete] = useState(false);
   const [rollingBack, setRollingBack] = useState(false);
@@ -95,6 +96,7 @@ function SessionView() {
   };
 
   const handleDelete = async (mode: DeletionMode, force?: boolean) => {
+    setDeleting(true);
     try {
       const url = new URL(`/api/sessions/${repoId}/${sessionId}`, window.location.origin);
       url.searchParams.set('deletionMode', mode);
@@ -119,6 +121,8 @@ function SessionView() {
       console.error('Failed to delete session:', err);
       setDeleteDialogOpen(false);
       setForceDeleteDialog({ isOpen: false });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -359,6 +363,7 @@ function SessionView() {
         isOpen={deleteDialogOpen}
         repoId={repoId!}
         sessionId={sessionId!}
+        deleting={deleting}
         onConfirm={(mode) => handleDelete(mode)}
         onCancel={() => setDeleteDialogOpen(false)}
       />
@@ -370,6 +375,7 @@ function SessionView() {
         message={`Worktree cleanup failed: ${forceDeleteDialog.error || 'Unknown error'}. Force delete will remove the session but leave the worktree orphaned.`}
         confirmLabel="Force Delete"
         variant="danger"
+        loading={deleting}
         onConfirm={() => handleDelete('folder-only', true)}
         onCancel={() => setForceDeleteDialog({ isOpen: false })}
       />
