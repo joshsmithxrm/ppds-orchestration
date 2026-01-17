@@ -16,7 +16,7 @@ export interface PromptContext {
   /** Git branch name for this session. */
   branchName: string;
 
-  /** Execution mode: 'single' (autonomous) or 'ralph' (iterative). */
+  /** Execution mode: 'manual' (user-controlled) or 'autonomous' (full loop). */
   mode?: ExecutionMode;
 
   /** Additional prompt sections to inject (from hooks). */
@@ -30,8 +30,8 @@ export interface PromptContext {
  * This class handles all prompt template generation logic.
  *
  * Supports two execution modes:
- * - 'single': Autonomous worker that completes full issue and ships PR
- * - 'ralph': Iterative worker that completes ONE task per session, then exits
+ * - 'manual': User controls Claude interactively, no automation
+ * - 'autonomous': Full loop worker that completes ONE task per session, then exits
  */
 export class WorkerPromptBuilder {
   /**
@@ -41,13 +41,13 @@ export class WorkerPromptBuilder {
   build(context: PromptContext): string {
     const {
       issue,
-      mode = 'single',
+      mode = 'manual',
       additionalSections,
     } = context;
 
-    // Ralph mode: minimal prompt - worker does ONE task then exits
+    // Autonomous mode: minimal prompt - worker does ONE task then exits
     // Runs in headless mode (-p flag), writes status file to signal completion
-    if (mode === 'ralph') {
+    if (mode === 'autonomous') {
       let prompt = `# Session: Issue #${issue.number}
 
 ## Issue

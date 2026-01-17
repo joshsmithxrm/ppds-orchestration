@@ -144,11 +144,13 @@ export class GitUtils {
 
   /**
    * Gets the git status for a worktree.
+   * @param worktreePath - Path to the worktree
+   * @param baseBranch - Base branch to diff against (default: origin/main)
    */
-  async getWorktreeStatus(worktreePath: string): Promise<WorktreeStatus> {
+  async getWorktreeStatus(worktreePath: string, baseBranch = 'origin/main'): Promise<WorktreeStatus> {
     const worktreeGit = simpleGit(worktreePath);
 
-    // Get changed files
+    // Get changed files (uncommitted)
     const status = await worktreeGit.status();
     const changedFiles = [
       ...status.modified,
@@ -157,16 +159,28 @@ export class GitUtils {
       ...status.renamed.map(r => r.to),
     ].slice(0, 10);
 
-    // Get diff stats
+    // Get diff stats: cumulative changes from baseBranch to HEAD (plus uncommitted)
     let insertions = 0;
     let deletions = 0;
 
     try {
-      const diffSummary = await worktreeGit.diffSummary(['HEAD~1']);
+      // Diff from base branch to HEAD (shows all committed changes on this branch)
+      const diffSummary = await worktreeGit.diffSummary([`${baseBranch}...HEAD`]);
       insertions = diffSummary.insertions;
       deletions = diffSummary.deletions;
+
+      // Also include uncommitted changes
+      if (status.modified.length > 0 || status.created.length > 0 || status.deleted.length > 0) {
+        try {
+          const uncommittedDiff = await worktreeGit.diffSummary();
+          insertions += uncommittedDiff.insertions;
+          deletions += uncommittedDiff.deletions;
+        } catch {
+          // Ignore uncommitted diff errors
+        }
+      }
     } catch {
-      // Might not have commits yet, try unstaged diff
+      // baseBranch might not exist or no common ancestor, fall back to unstaged diff
       try {
         const diffSummary = await worktreeGit.diffSummary();
         insertions = diffSummary.insertions;
@@ -247,5 +261,72 @@ export class GitUtils {
     }
 
     return worktrees;
+  }
+
+  /**
+   * Gets the state of a worktree for deletion safety checks.
+   * Returns counts of uncommitted files and unpushed commits.
+   */
+  async getWorktreeState(worktreePath: string): Promise<{
+    uncommittedFiles: number;
+    unpushedCommits: number;
+    isClean: boolean;
+  }> {
+    const worktreeGit = simpleGit(worktreePath);
+
+    // Count uncommitted files
+    const status = await worktreeGit.status();
+    const uncommittedFiles =
+      status.modified.length +
+      status.created.length +
+      status.deleted.length +
+      status.staged.length +
+      status.not_added.length;
+
+    // Count unpushed commits
+    let unpushedCommits = 0;
+    try {
+      // Check if tracking branch exists
+      const trackingBranch = await worktreeGit.raw(['rev-parse', '--abbrev-ref', '@{upstream}']);
+      if (trackingBranch.trim()) {
+        // Count commits ahead of upstream
+        const output = await worktreeGit.raw(['rev-list', '--count', '@{upstream}..HEAD']);
+        unpushedCommits = parseInt(output.trim(), 10) || 0;
+      }
+    } catch {
+      // No upstream branch, all local commits are unpushed
+      try {
+        const output = await worktreeGit.raw(['rev-list', '--count', 'HEAD']);
+        unpushedCommits = parseInt(output.trim(), 10) || 0;
+      } catch {
+        // No commits at all
+        unpushedCommits = 0;
+      }
+    }
+
+    return {
+      uncommittedFiles,
+      unpushedCommits,
+      isClean: uncommittedFiles === 0 && unpushedCommits === 0,
+    };
+  }
+
+  /**
+   * Deletes a local branch.
+   * @param branchName - Name of the branch to delete
+   * @param force - Force delete even if not fully merged
+   */
+  async deleteLocalBranch(branchName: string, force = true): Promise<void> {
+    const flag = force ? '-D' : '-d';
+    await this.git.raw(['branch', flag, branchName]);
+  }
+
+  /**
+   * Deletes a remote branch.
+   * @param branchName - Name of the branch to delete
+   * @param remote - Remote name (default: origin)
+   */
+  async deleteRemoteBranch(branchName: string, remote = 'origin'): Promise<void> {
+    await this.git.raw(['push', remote, '--delete', branchName]);
   }
 }

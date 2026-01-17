@@ -8,7 +8,9 @@ import {
   SessionContext,
   SessionListResult,
   WorktreeStatus,
+  WorktreeState,
   ExecutionMode,
+  DeletionMode,
   IssueRef,
   STALE_THRESHOLD_MS,
   DeleteResult,
@@ -56,7 +58,7 @@ export interface SessionServiceConfig {
  * Options for spawning a new worker session.
  */
 export interface SpawnOptions {
-  /** Execution mode: 'single' (autonomous) or 'ralph' (iterative). Default: 'single'. */
+  /** Execution mode: 'manual' (user-controlled) or 'autonomous' (full loop). Default: 'manual'. */
   mode?: ExecutionMode;
   /** Additional prompt sections to inject (from hooks). */
   additionalPromptSections?: string[];
@@ -88,7 +90,7 @@ export class SessionService {
    */
   async spawn(issueNumber: number, options?: SpawnOptions): Promise<SessionState> {
     const sessionId = issueNumber.toString();
-    const mode = options?.mode ?? 'single';
+    const mode = options?.mode ?? 'manual';
 
     // Check for existing active session with this issue
     const allSessions = await this.store.listAll();
@@ -120,7 +122,7 @@ export class SessionService {
     // Generate branch and worktree names
     const worktreePrefix = this.config.worktreePrefix ?? `${path.basename(this.config.repoRoot)}-`;
     const branchName = `issue-${issueNumber}`;
-    const worktreeName = `${worktreePrefix}issue-${issueNumber}`;
+    const worktreeName = `${worktreePrefix}${branchName}`;
 
     const worktreePath = path.join(path.dirname(this.config.repoRoot), worktreeName);
 
@@ -425,12 +427,13 @@ export class SessionService {
    * session-watcher to kill the Claude process before removing the worktree.
    *
    * @param sessionId - Session to delete
-   * @param options.keepWorktree - If true, don't remove worktree
+   * @param options.keepWorktree - If true, don't remove worktree (deprecated, use deletionMode)
    * @param options.force - If true, delete session even if worktree cleanup fails
+   * @param options.deletionMode - How aggressively to clean up (folder-only, with-local-branch, everything)
    */
   async delete(
     sessionId: string,
-    options?: { keepWorktree?: boolean; force?: boolean }
+    options?: { keepWorktree?: boolean; force?: boolean; deletionMode?: DeletionMode }
   ): Promise<DeleteResult> {
     const session = await this.store.load(sessionId);
 
@@ -476,11 +479,17 @@ export class SessionService {
     };
     await this.store.save(deletingSession);
 
+    // Determine deletion mode (default to folder-only for backward compat)
+    const deletionMode = options?.deletionMode ?? 'folder-only';
+    const shouldRemoveWorktree = !options?.keepWorktree;
+
     // Attempt worktree removal if requested
     let worktreeRemoved = false;
     let worktreeError: string | undefined;
+    let localBranchDeleted = false;
+    let remoteBranchDeleted = false;
 
-    if (!options?.keepWorktree && fs.existsSync(session.worktreePath)) {
+    if (shouldRemoveWorktree && fs.existsSync(session.worktreePath)) {
       const result = await this.gitUtils.removeWorktree(session.worktreePath);
       worktreeRemoved = result.success;
       worktreeError = result.error;
@@ -509,6 +518,33 @@ export class SessionService {
       };
     }
 
+    // Delete branches based on deletion mode
+    if (deletionMode === 'with-local-branch' || deletionMode === 'everything') {
+      try {
+        await this.gitUtils.deleteLocalBranch(session.branch, true);
+        localBranchDeleted = true;
+      } catch (error) {
+        // Branch might not exist or is already deleted
+        const msg = error instanceof Error ? error.message : String(error);
+        if (!msg.includes('not found') && !msg.includes('does not exist')) {
+          console.warn(`Failed to delete local branch ${session.branch}: ${msg}`);
+        }
+      }
+    }
+
+    if (deletionMode === 'everything') {
+      try {
+        await this.gitUtils.deleteRemoteBranch(session.branch);
+        remoteBranchDeleted = true;
+      } catch (error) {
+        // Branch might not exist on remote
+        const msg = error instanceof Error ? error.message : String(error);
+        if (!msg.includes('not found') && !msg.includes('does not exist')) {
+          console.warn(`Failed to delete remote branch ${session.branch}: ${msg}`);
+        }
+      }
+    }
+
     // Delete session file
     await this.store.delete(sessionId);
 
@@ -516,6 +552,8 @@ export class SessionService {
       success: true,
       sessionDeleted: true,
       worktreeRemoved,
+      localBranchDeleted,
+      remoteBranchDeleted,
       // If force-deleted with failed worktree, note the potential orphan
       orphanedWorktreePath: worktreeRemoved ? undefined : session.worktreePath,
     };
@@ -681,6 +719,7 @@ export class SessionService {
 
   /**
    * Gets the git status for a session's worktree.
+   * Diffs against the configured baseBranch to show cumulative changes.
    */
   async getWorktreeStatus(sessionId: string): Promise<WorktreeStatus | null> {
     const session = await this.store.load(sessionId);
@@ -689,7 +728,22 @@ export class SessionService {
       return null;
     }
 
-    return this.gitUtils.getWorktreeStatus(session.worktreePath);
+    const baseBranch = this.config.baseBranch ?? 'origin/main';
+    return this.gitUtils.getWorktreeStatus(session.worktreePath, baseBranch);
+  }
+
+  /**
+   * Gets the state of a session's worktree for deletion safety checks.
+   * Returns counts of uncommitted files and unpushed commits.
+   */
+  async getWorktreeState(sessionId: string): Promise<WorktreeState | null> {
+    const session = await this.store.load(sessionId);
+
+    if (!session || !fs.existsSync(session.worktreePath)) {
+      return null;
+    }
+
+    return this.gitUtils.getWorktreeState(session.worktreePath);
   }
 
   /**
@@ -774,7 +828,7 @@ export class SessionService {
     worktreePath: string,
     issue: IssueRef,
     branchName: string,
-    mode: ExecutionMode = 'single',
+    mode: ExecutionMode = 'manual',
     additionalPromptSections?: string[]
   ): Promise<string> {
     const claudeDir = path.join(worktreePath, '.claude');

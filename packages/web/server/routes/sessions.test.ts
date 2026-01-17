@@ -129,7 +129,7 @@ describe('Sessions API', () => {
       expect(response.status).toBe(201);
       expect(response.body.session).toEqual(mockSession);
       // API spawns each issue as separate session
-      expect(mockMultiRepoService.spawn).toHaveBeenCalledWith('repo-1', 123, 'single');
+      expect(mockMultiRepoService.spawn).toHaveBeenCalledWith('repo-1', 123, 'manual');
     });
 
     it('spawns separate sessions for each issue in issueNumbers array', async () => {
@@ -153,12 +153,12 @@ describe('Sessions API', () => {
       expect(response.body.sessions).toEqual([mockSession1, mockSession2, mockSession3]);
       // spawn called 3 times (once per issue)
       expect(mockMultiRepoService.spawn).toHaveBeenCalledTimes(3);
-      expect(mockMultiRepoService.spawn).toHaveBeenNthCalledWith(1, 'repo-1', 1, 'single');
-      expect(mockMultiRepoService.spawn).toHaveBeenNthCalledWith(2, 'repo-1', 2, 'single');
-      expect(mockMultiRepoService.spawn).toHaveBeenNthCalledWith(3, 'repo-1', 3, 'single');
+      expect(mockMultiRepoService.spawn).toHaveBeenNthCalledWith(1, 'repo-1', 1, 'manual');
+      expect(mockMultiRepoService.spawn).toHaveBeenNthCalledWith(2, 'repo-1', 2, 'manual');
+      expect(mockMultiRepoService.spawn).toHaveBeenNthCalledWith(3, 'repo-1', 3, 'manual');
     });
 
-    it('spawns with ralph mode and starts loop', async () => {
+    it('spawns with autonomous mode and starts loop', async () => {
       const mockSession = {
         id: '123',
         issue: { number: 123, title: 'Test Issue' },
@@ -170,7 +170,7 @@ describe('Sessions API', () => {
       const app = createApp();
       const response = await request(app)
         .post('/api/sessions/repo-1')
-        .send({ issueNumber: 123, mode: 'ralph', iterations: 5 });
+        .send({ issueNumber: 123, mode: 'autonomous', iterations: 5 });
 
       expect(response.status).toBe(201);
       expect(mockRalphManager.startLoop).toHaveBeenCalledWith('repo-1', '123', { iterations: 5 });

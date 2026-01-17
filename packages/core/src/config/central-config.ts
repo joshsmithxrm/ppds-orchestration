@@ -64,7 +64,7 @@ export const RepoConfig = z.object({
   /** Prefix for worktree directory names */
   worktreePrefix: z.string().optional(),
   /** Default execution mode for this repo */
-  defaultMode: z.enum(['single', 'ralph']).optional(),
+  defaultMode: z.enum(['manual', 'autonomous']).optional(),
   /** CLI command for workers to use (overrides global) */
   cliCommand: z.string().optional(),
   /** Per-repo hook overrides */
@@ -258,5 +258,5 @@ export type CentralConfig = z.infer<typeof CentralConfig>;
 /**
  * Execution mode for a session.
  */
-export const ExecutionMode = z.enum(['single', 'ralph']);
+export const ExecutionMode = z.enum(['manual', 'autonomous']);
 export type ExecutionMode = z.infer<typeof ExecutionMode>;

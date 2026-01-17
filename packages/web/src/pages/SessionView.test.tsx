@@ -9,7 +9,7 @@ const mockSession = {
   issueNumber: 123,
   issueTitle: 'Test Issue',
   status: 'working',
-  mode: 'single',
+  mode: 'manual',
   branch: 'issue-123',
   worktreePath: '/path/to/worktree',
   startedAt: new Date().toISOString(),
@@ -283,10 +283,10 @@ describe('SessionView', () => {
     });
   });
 
-  it('shows Ralph status for ralph mode sessions', async () => {
-    const ralphSession = {
+  it('shows Autonomous status for autonomous mode sessions', async () => {
+    const autonomousSession = {
       ...mockSession,
-      mode: 'ralph',
+      mode: 'autonomous',
     };
 
     (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
@@ -298,17 +298,17 @@ describe('SessionView', () => {
       }
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ session: ralphSession }),
+        json: () => Promise.resolve({ session: autonomousSession }),
       });
     });
 
     renderSessionView();
 
     await waitFor(() => {
-      expect(screen.getByText('Ralph')).toBeInTheDocument();
+      expect(screen.getByText('Autonomous')).toBeInTheDocument();
     });
 
-    // RalphStatus component should render
+    // RalphStatus component should render (still called RalphStatus internally)
     expect(screen.getByText('Ralph Loop')).toBeInTheDocument();
   });
 

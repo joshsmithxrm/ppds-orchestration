@@ -4,14 +4,14 @@ interface Repo {
   id: string;
   config: {
     path: string;
-    defaultMode?: 'single' | 'ralph';
+    defaultMode?: 'manual' | 'autonomous';
   };
 }
 
 interface SpawnDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onSpawn: (repoId: string, issueNumbers: number[], mode: 'single' | 'ralph', iterations?: number) => Promise<void>;
+  onSpawn: (repoId: string, issueNumbers: number[], mode: 'manual' | 'autonomous', iterations?: number) => Promise<void>;
 }
 
 /**
@@ -53,7 +53,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [selectedRepo, setSelectedRepo] = useState<string>('');
   const [issueNumber, setIssueNumber] = useState<string>('');
-  const [mode, setMode] = useState<'single' | 'ralph'>('single');
+  const [mode, setMode] = useState<'manual' | 'autonomous'>('manual');
   const [iterations, setIterations] = useState<string>('10');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +72,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
       setRepos(data.repos || []);
       if (data.repos?.length > 0 && !selectedRepo) {
         setSelectedRepo(data.repos[0].id);
-        setMode(data.repos[0].config.defaultMode || 'single');
+        setMode(data.repos[0].config.defaultMode || 'manual');
       }
     } catch (err) {
       console.error('Failed to fetch repos:', err);
@@ -97,7 +97,7 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
     setError(null);
 
     try {
-      const iterNum = mode === 'ralph' ? parseInt(iterations, 10) : undefined;
+      const iterNum = mode === 'autonomous' ? parseInt(iterations, 10) : undefined;
       await onSpawn(selectedRepo, result.numbers, mode, iterNum);
       setIssueNumber('');
       onClose();
@@ -161,36 +161,36 @@ function SpawnDialog({ isOpen, onClose, onSpawn }: SpawnDialogProps) {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setMode('single')}
+                onClick={() => setMode('manual')}
                 className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
-                  mode === 'single'
+                  mode === 'manual'
                     ? 'bg-ppds-accent text-ppds-bg'
                     : 'bg-ppds-bg text-ppds-muted hover:bg-gray-700'
                 }`}
               >
-                Single
+                Manual
               </button>
               <button
                 type="button"
-                onClick={() => setMode('ralph')}
+                onClick={() => setMode('autonomous')}
                 className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
-                  mode === 'ralph'
+                  mode === 'autonomous'
                     ? 'bg-ppds-ralph text-white'
                     : 'bg-ppds-bg text-ppds-muted hover:bg-gray-700'
                 }`}
               >
-                Ralph
+                Autonomous
               </button>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              {mode === 'single'
-                ? 'Worker runs autonomously until PR is created'
-                : 'Worker completes one task per iteration, re-spawned automatically'}
+              {mode === 'manual'
+                ? 'You control Claude interactively, no automation'
+                : 'Full loop: plan, implement, review, iterate, ship'}
             </p>
           </div>
 
-          {/* Ralph Iterations (only shown when Ralph mode is selected) */}
-          {mode === 'ralph' && (
+          {/* Iterations (only shown when Autonomous mode is selected) */}
+          {mode === 'autonomous' && (
             <div>
               <label className="block text-sm text-ppds-muted mb-1">Iterations</label>
               <input

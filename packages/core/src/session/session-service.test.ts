@@ -58,7 +58,7 @@ describe('SessionService', () => {
     id,
     issue: createTestIssue(issueNumber),
     status: 'working',
-    mode: 'single',
+    mode: 'manual',
     branch: `issue-${issueNumber}`,
     worktreePath,
     startedAt: new Date().toISOString(),

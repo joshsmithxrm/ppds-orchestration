@@ -46,7 +46,7 @@ describe('RalphLoopManager', () => {
     id: '1',
     issue: { number: 1, title: 'Test Issue', body: 'Test body' },
     status: 'working',
-    mode: 'ralph',
+    mode: 'autonomous',
     branch: 'issue-1',
     worktreePath: tempDir,
     startedAt: new Date().toISOString(),

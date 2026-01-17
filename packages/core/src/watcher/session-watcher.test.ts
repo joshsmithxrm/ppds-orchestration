@@ -35,7 +35,7 @@ describe('SessionWatcher', () => {
     id,
     issue: createTestIssue(issueNumber),
     status: 'working',
-    mode: 'single',
+    mode: 'manual',
     branch: `issue-${issueNumber}`,
     worktreePath: '/tmp/test',
     startedAt: new Date().toISOString(),

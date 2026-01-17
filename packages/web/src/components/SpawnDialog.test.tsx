@@ -72,8 +72,8 @@ describe('SpawnDialog', () => {
       json: () =>
         Promise.resolve({
           repos: [
-            { id: 'repo-1', config: { path: '/path/to/repo-1', defaultMode: 'single' } },
-            { id: 'repo-2', config: { path: '/path/to/repo-2', defaultMode: 'ralph' } },
+            { id: 'repo-1', config: { path: '/path/to/repo-1', defaultMode: 'manual' } },
+            { id: 'repo-2', config: { path: '/path/to/repo-2', defaultMode: 'autonomous' } },
           ],
         }),
     });
@@ -148,7 +148,7 @@ describe('SpawnDialog', () => {
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(mockOnSpawn).toHaveBeenCalledWith('repo-1', [42], 'single', undefined);
+      expect(mockOnSpawn).toHaveBeenCalledWith('repo-1', [42], 'manual', undefined);
     });
     expect(mockOnClose).toHaveBeenCalled();
   });
@@ -170,7 +170,7 @@ describe('SpawnDialog', () => {
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(mockOnSpawn).toHaveBeenCalledWith('repo-1', [1, 2, 3], 'single', undefined);
+      expect(mockOnSpawn).toHaveBeenCalledWith('repo-1', [1, 2, 3], 'manual', undefined);
     });
     expect(mockOnClose).toHaveBeenCalled();
   });
@@ -192,7 +192,7 @@ describe('SpawnDialog', () => {
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(mockOnSpawn).toHaveBeenCalledWith('repo-1', [4, 5, 6], 'single', undefined);
+      expect(mockOnSpawn).toHaveBeenCalledWith('repo-1', [4, 5, 6], 'manual', undefined);
     });
     expect(mockOnClose).toHaveBeenCalled();
   });
@@ -227,11 +227,11 @@ describe('SpawnDialog', () => {
     });
 
     // Verify both mode buttons exist
-    expect(screen.getByText('Single')).toBeInTheDocument();
-    expect(screen.getByText('Ralph')).toBeInTheDocument();
+    expect(screen.getByText('Manual')).toBeInTheDocument();
+    expect(screen.getByText('Autonomous')).toBeInTheDocument();
 
     // Verify mode description is shown
-    expect(screen.getByText(/Worker runs autonomously/i)).toBeInTheDocument();
+    expect(screen.getByText(/You control Claude/i)).toBeInTheDocument();
   });
 
   it('closes dialog when Cancel button is clicked', async () => {

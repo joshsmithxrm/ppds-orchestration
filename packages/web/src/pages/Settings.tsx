@@ -7,7 +7,7 @@ interface RepoConfig {
   githubRepo?: string;
   baseBranch?: string;
   worktreePrefix?: string;
-  defaultMode?: 'single' | 'ralph';
+  defaultMode?: 'manual' | 'autonomous';
   cliCommand?: string;
 }
 
@@ -223,12 +223,12 @@ function Settings() {
                           <span className="text-gray-500">Default mode:</span>{' '}
                           <span
                             className={
-                              repo.defaultMode === 'ralph'
+                              repo.defaultMode === 'autonomous'
                                 ? 'text-ppds-ralph'
                                 : 'text-ppds-accent'
                             }
                           >
-                            {repo.defaultMode}
+                            {repo.defaultMode === 'autonomous' ? 'Autonomous' : 'Manual'}
                           </span>
                         </div>
                       )}

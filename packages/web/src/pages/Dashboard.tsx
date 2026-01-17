@@ -105,7 +105,7 @@ function Dashboard() {
   // Helper to check if sound should play (respects muteRalph)
   const shouldPlaySound = (session: Session | null) => {
     if (!session) return true;
-    if (session.mode === 'ralph' && config?.sounds?.muteRalph) return false;
+    if (session.mode === 'autonomous' && config?.sounds?.muteRalph) return false;
     return true;
   };
 
@@ -260,7 +260,7 @@ function Dashboard() {
   const handleSpawn = async (
     repoId: string,
     issueNumbers: number[],
-    mode: 'single' | 'ralph',
+    mode: 'manual' | 'autonomous',
     iterations?: number
   ) => {
     const res = await fetch(`/api/sessions/${repoId}`, {
@@ -594,8 +594,8 @@ function Dashboard() {
                   <div className="flex items-center gap-3">
                     <div className="text-right">
                       <div className="text-sm text-ppds-muted">
-                        {session.mode === 'ralph' && (
-                          <span className="text-ppds-ralph mr-2">[Ralph]</span>
+                        {session.mode === 'autonomous' && (
+                          <span className="text-ppds-ralph mr-2">[Auto]</span>
                         )}
                         {getElapsedTime(session.startedAt)}
                       </div>

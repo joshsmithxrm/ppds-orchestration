@@ -195,8 +195,8 @@ function SessionView() {
         >
           {session.status}
         </span>
-        {session.mode === 'ralph' && (
-          <span className="px-2 py-1 rounded text-sm bg-ppds-ralph">Ralph</span>
+        {session.mode === 'autonomous' && (
+          <span className="px-2 py-1 rounded text-sm bg-ppds-ralph">Autonomous</span>
         )}
       </div>
 
@@ -275,8 +275,8 @@ function SessionView() {
         </div>
       </div>
 
-      {/* Ralph Status (for ralph mode sessions) */}
-      {session.mode === 'ralph' && (
+      {/* Autonomous Status (for autonomous mode sessions) */}
+      {session.mode === 'autonomous' && (
         <RalphStatus repoId={repoId!} sessionId={sessionId!} />
       )}
 

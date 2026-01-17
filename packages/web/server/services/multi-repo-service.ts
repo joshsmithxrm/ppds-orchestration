@@ -226,12 +226,12 @@ export class MultiRepoService {
    * Spawn a new worker for an issue.
    * @param repoId - Repository ID
    * @param issueNumber - Issue number to work on
-   * @param mode - Execution mode ('single' or 'ralph')
+   * @param mode - Execution mode ('manual' or 'autonomous')
    */
   async spawn(
     repoId: string,
     issueNumber: number,
-    mode: ExecutionMode = 'single'
+    mode: ExecutionMode = 'manual'
   ): Promise<SessionState> {
     const service = this.getService(repoId);
 

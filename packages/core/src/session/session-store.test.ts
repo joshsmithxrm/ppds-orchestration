@@ -30,7 +30,7 @@ describe('SessionStore', () => {
     id,
     issue: createTestIssue(issueNumber),
     status: 'working',
-    mode: 'single',
+    mode: 'manual',
     branch: `issue-${issueNumber}`,
     worktreePath: `/tmp/test-worktree-${id}`,
     startedAt: new Date().toISOString(),

@@ -24,7 +24,7 @@ const mockSessions = [
     issueNumber: 1,
     issueTitle: 'Test Issue 1',
     status: 'working',
-    mode: 'single',
+    mode: 'manual',
     branch: 'issue-1',
     startedAt: new Date().toISOString(),
     lastHeartbeat: new Date().toISOString(),

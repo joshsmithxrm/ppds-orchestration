@@ -238,7 +238,7 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
 
   /**
    * Spawns a worker with PTY for interactive terminal access.
-   * Spawns Claude directly and writes the prompt via PTY stdin.
+   * Opens Claude without prompt, then sends the prompt via PTY stdin to avoid truncation.
    */
   private async spawnWithPty(
     spawnId: string,
@@ -250,12 +250,12 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
 
     try {
       // Spawn Claude via cmd.exe to resolve PATH (node-pty doesn't resolve PATH)
-      // Pass the prompt as a command line argument (not stdin) to show interactive TUI
+      // Start without prompt - we'll send it via PTY stdin after Claude is ready
       // --dangerously-skip-permissions for autonomous operation
       await ptyManager.createSession({
         sessionId: spawnId,
         command: 'cmd.exe',
-        args: ['/c', 'claude', request.promptContent, '--dangerously-skip-permissions'],
+        args: ['/c', 'claude', '--dangerously-skip-permissions'],
         cwd: request.workingDirectory,
         logPath,
         cols: 150,
@@ -264,6 +264,17 @@ export class WindowsTerminalSpawner implements WorkerSpawner {
 
       // Track this as a PTY spawn
       this.ptySpawns.add(spawnId);
+
+      // Wait for Claude to initialize before sending prompt
+      // Claude needs time to start and show its prompt
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Send the prompt via PTY stdin (avoids command-line length limits)
+      // This simulates the user typing the prompt after Claude opens
+      ptyManager.write(spawnId, request.promptContent);
+
+      // Press Enter to submit the prompt
+      ptyManager.write(spawnId, '\r');
 
       return {
         success: true,

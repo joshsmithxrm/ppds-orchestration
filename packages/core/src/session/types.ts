@@ -2,11 +2,29 @@ import { z } from 'zod';
 
 /**
  * Execution mode for a session.
- * - 'single': Worker runs autonomously until PR (current behavior)
- * - 'ralph': Worker completes one task, exits, and is re-spawned for next task
+ * - 'manual': User controls Claude interactively, no automation
+ * - 'autonomous': Full loop: plan -> implement -> review -> iterate -> ship
  */
-export const ExecutionMode = z.enum(['single', 'ralph']);
+export const ExecutionMode = z.enum(['manual', 'autonomous']);
 export type ExecutionMode = z.infer<typeof ExecutionMode>;
+
+/**
+ * Deletion mode for session cleanup.
+ * - 'folder-only': Remove worktree folder, keep branches
+ * - 'with-local-branch': Remove worktree and local branch, keep remote
+ * - 'everything': Remove worktree, local branch, and remote branch
+ */
+export const DeletionMode = z.enum(['folder-only', 'with-local-branch', 'everything']);
+export type DeletionMode = z.infer<typeof DeletionMode>;
+
+/**
+ * State of a worktree for deletion safety checks.
+ */
+export interface WorktreeState {
+  uncommittedFiles: number;
+  unpushedCommits: number;
+  isClean: boolean;
+}
 
 /**
  * Session lifecycle status.
@@ -75,8 +93,8 @@ export const SessionState = z.object({
   /** Current session status. */
   status: SessionStatus,
 
-  /** Execution mode: 'single' (autonomous) or 'ralph' (iterative loop). */
-  mode: ExecutionMode.default('single'),
+  /** Execution mode: 'manual' (user-controlled) or 'autonomous' (full loop). */
+  mode: ExecutionMode.default('manual'),
 
   /** Git branch name for this session. */
   branch: z.string(),
@@ -256,6 +274,10 @@ export interface DeleteResult {
   success: boolean;
   sessionDeleted: boolean;
   worktreeRemoved: boolean;
+  /** True if local branch was deleted (when deletionMode includes local branch). */
+  localBranchDeleted?: boolean;
+  /** True if remote branch was deleted (when deletionMode is 'everything'). */
+  remoteBranchDeleted?: boolean;
   error?: string;
   /** If worktree removal failed, the path that may be orphaned. */
   orphanedWorktreePath?: string;

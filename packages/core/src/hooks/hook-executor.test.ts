@@ -25,7 +25,7 @@ describe('HookExecutor', () => {
     id: '123',
     issue: mockIssue,
     status: 'working',
-    mode: 'single',
+    mode: 'manual',
     branch: 'issue-123',
     worktreePath: tempDir,
     startedAt: new Date().toISOString(),

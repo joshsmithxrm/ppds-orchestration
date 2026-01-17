@@ -6,9 +6,11 @@ export {
   SessionDynamicState,
   WorktreeStatus,
   ExecutionMode,
+  DeletionMode,
   IssueRef,
   STALE_THRESHOLD_MS,
 } from './session/types.js';
+export type { WorktreeState } from './session/types.js';
 
 // Session formatting utilities (browser-safe)
 export {

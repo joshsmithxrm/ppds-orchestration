@@ -110,7 +110,7 @@ sessionsRouter.get('/:repoId/:sessionId', async (req: Request, res: Response) =>
 /**
  * POST /api/sessions/:repoId
  * Spawn new worker session(s).
- * Body: { issueNumber?: number, issueNumbers?: number[], mode?: 'single' | 'ralph', iterations?: number }
+ * Body: { issueNumber?: number, issueNumbers?: number[], mode?: 'manual' | 'autonomous', iterations?: number }
  * - issueNumbers: Array of issue numbers (each spawns as separate session)
  * - issueNumber: Single issue number (backwards compatibility)
  */
@@ -119,7 +119,7 @@ sessionsRouter.post('/:repoId', async (req: Request, res: Response) => {
     const service: MultiRepoService = req.app.locals.multiRepoService;
     const ralphManager: RalphLoopManager = req.app.locals.ralphManager;
     const { repoId } = req.params;
-    const { issueNumber, issueNumbers, mode = 'single', iterations } = req.body;
+    const { issueNumber, issueNumbers, mode = 'manual', iterations } = req.body;
 
     // Normalize: prefer issueNumbers array, fall back to single issueNumber
     let issues: number[];
@@ -141,8 +141,8 @@ sessionsRouter.post('/:repoId', async (req: Request, res: Response) => {
       const session = await service.spawn(repoId, issue, mode as ExecutionMode);
       sessions.push(session);
 
-      // Start Ralph loop if mode is 'ralph'
-      if (mode === 'ralph') {
+      // Start autonomous loop if mode is 'autonomous'
+      if (mode === 'autonomous') {
         const options = iterations ? { iterations } : undefined;
         await ralphManager.startLoop(repoId, session.id, options);
       }
