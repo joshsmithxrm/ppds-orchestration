@@ -29,17 +29,24 @@ export function Terminal({ sessionId, className = '', onExit, showStatus = true 
     onExit,
   });
 
-  // Fit terminal when container size changes
+  // Fit terminal when container size changes (debounced to prevent scroll-triggered fits)
   useEffect(() => {
     if (!containerRef.current) return;
 
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
     const resizeObserver = new ResizeObserver(() => {
-      fit();
+      // Debounce fit() to avoid issues during scrolling
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        fit();
+      }, 100);
     });
 
     resizeObserver.observe(containerRef.current);
 
     return () => {
+      if (timeoutId) clearTimeout(timeoutId);
       resizeObserver.disconnect();
     };
   }, [fit, containerRef]);
