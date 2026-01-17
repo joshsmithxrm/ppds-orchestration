@@ -190,23 +190,20 @@ function SessionView() {
       : 'bg-blue-500';
 
   return (
-    <div className="flex flex-col h-[calc(100vh-180px)]">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Compact Header */}
-      <div className="flex items-center justify-between gap-4 pb-3 border-b border-gray-700 flex-shrink-0">
+      <div className="flex items-center justify-between gap-4 pb-2 flex-shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <Link to="/" className="text-ppds-muted hover:text-white flex-shrink-0">
             &larr;
           </Link>
-          <h1 className="text-lg font-semibold text-white truncate">
-            {session.repoId} #{session.issueNumber}
-          </h1>
           <span className={`px-2 py-0.5 rounded text-xs flex-shrink-0 ${statusColor}`}>
             {session.status}
           </span>
           {session.mode === 'autonomous' && (
             <span className="px-2 py-0.5 rounded text-xs bg-ppds-ralph flex-shrink-0">Auto</span>
           )}
-          <span className="text-xs text-ppds-muted font-mono truncate hidden sm:block">
+          <span className="text-xs text-ppds-muted font-mono truncate">
             {session.branch}
           </span>
         </div>
@@ -270,32 +267,21 @@ function SessionView() {
         </div>
       </div>
 
-      {/* Stuck Reason Alert - shows at top if stuck */}
+      {/* Stuck Reason Alert */}
       {session.stuckReason && (
-        <div className="bg-red-900/30 border border-red-700 rounded px-3 py-2 mt-3 flex-shrink-0">
+        <div className="bg-red-900/30 border border-red-700 rounded px-3 py-2 mb-2 flex-shrink-0">
           <span className="text-red-400 font-medium text-sm">Stuck: </span>
           <span className="text-red-300 text-sm">{session.stuckReason}</span>
         </div>
       )}
 
-      {/* Terminal - fills available space */}
-      {session.spawnId ? (
-        <div className="flex-1 min-h-0 mt-3 bg-ppds-card rounded-lg overflow-hidden">
-          <Terminal sessionId={session.spawnId} className="h-full" />
-        </div>
-      ) : (
-        <div className="flex-1 min-h-0 mt-3 bg-ppds-card rounded-lg flex items-center justify-center">
-          <span className="text-ppds-muted">Waiting for terminal connection...</span>
-        </div>
-      )}
-
-      {/* Collapsible Panels Footer */}
-      <div className="flex-shrink-0 mt-3 space-y-2">
+      {/* Collapsible Panels - ABOVE terminal */}
+      <div className="flex-shrink-0 mb-2 space-y-2">
         {/* Panel Toggle Buttons */}
         <div className="flex gap-2 text-sm">
           <button
             onClick={() => togglePanel('details')}
-            className={`px-3 py-1.5 rounded transition-colors ${
+            className={`px-3 py-1 rounded transition-colors ${
               expandedPanel === 'details'
                 ? 'bg-ppds-accent text-ppds-bg'
                 : 'bg-ppds-card text-ppds-muted hover:text-white'
@@ -305,7 +291,7 @@ function SessionView() {
           </button>
           <button
             onClick={() => togglePanel('git')}
-            className={`px-3 py-1.5 rounded transition-colors ${
+            className={`px-3 py-1 rounded transition-colors ${
               expandedPanel === 'git'
                 ? 'bg-ppds-accent text-ppds-bg'
                 : 'bg-ppds-card text-ppds-muted hover:text-white'
@@ -322,7 +308,7 @@ function SessionView() {
           {session.mode === 'autonomous' && (
             <button
               onClick={() => togglePanel('ralph')}
-              className={`px-3 py-1.5 rounded transition-colors ${
+              className={`px-3 py-1 rounded transition-colors ${
                 expandedPanel === 'ralph'
                   ? 'bg-ppds-ralph text-white'
                   : 'bg-ppds-card text-ppds-muted hover:text-white'
@@ -335,8 +321,8 @@ function SessionView() {
 
         {/* Expanded Panel Content */}
         {expandedPanel === 'details' && (
-          <div className="bg-ppds-card rounded-lg p-4 space-y-2">
-            <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="bg-ppds-card rounded-lg p-3 text-sm">
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <span className="text-ppds-muted">Issue: </span>
                 <span className="text-white">{session.issueTitle}</span>
@@ -367,16 +353,16 @@ function SessionView() {
         )}
 
         {expandedPanel === 'git' && (
-          <div className="bg-ppds-card rounded-lg p-4">
+          <div className="bg-ppds-card rounded-lg p-3 text-sm">
             {session.worktreeStatus ? (
               <div className="space-y-2">
-                <div className="flex gap-4 text-sm">
+                <div className="flex gap-4">
                   <span className="text-green-400">+{session.worktreeStatus.insertions}</span>
                   <span className="text-red-400">-{session.worktreeStatus.deletions}</span>
                   <span className="text-ppds-muted">{session.worktreeStatus.filesChanged} files</span>
                 </div>
                 {session.worktreeStatus.lastCommitMessage && (
-                  <div className="text-sm text-gray-300">
+                  <div className="text-gray-300">
                     Last commit: {session.worktreeStatus.lastCommitMessage}
                   </div>
                 )}
@@ -392,17 +378,28 @@ function SessionView() {
                 )}
               </div>
             ) : (
-              <div className="text-ppds-muted text-sm">No changes yet</div>
+              <div className="text-ppds-muted">No changes yet</div>
             )}
           </div>
         )}
 
         {expandedPanel === 'ralph' && session.mode === 'autonomous' && (
-          <div className="bg-ppds-card rounded-lg p-4">
+          <div className="bg-ppds-card rounded-lg p-3">
             <RalphStatus repoId={repoId!} sessionId={sessionId!} compact />
           </div>
         )}
       </div>
+
+      {/* Terminal - fills remaining space */}
+      {session.spawnId ? (
+        <div className="flex-1 min-h-0 bg-ppds-card rounded-lg overflow-hidden">
+          <Terminal sessionId={session.spawnId} className="h-full" />
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 bg-ppds-card rounded-lg flex items-center justify-center">
+          <span className="text-ppds-muted">Waiting for terminal connection...</span>
+        </div>
+      )}
 
       {/* Delete Dialog with Mode Selection */}
       <DeleteDialog

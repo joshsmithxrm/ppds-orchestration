@@ -440,7 +440,7 @@ function Dashboard() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="h-full overflow-auto space-y-6">
       {/* Connection Warning */}
       {!wsConnected && (
         <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg px-4 py-2 flex items-center gap-2">

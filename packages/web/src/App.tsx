@@ -46,13 +46,12 @@ function App() {
   return (
     <ConfigContext.Provider value={config}>
     <SoundsContext.Provider value={sounds}>
-      <div className="min-h-screen bg-ppds-bg">
-        <header className="bg-ppds-header border-b border-gray-800 relative">
-          <Link to="/" className="block py-6 hover:opacity-90 transition-opacity">
-            <img src="/orchestrator-banner.png" alt="Orchestrator" className="max-w-md mx-auto" />
-            <div className="text-center text-ppds-accent text-sm font-medium mt-3">Orchestration Hub</div>
+      <div className="h-screen flex flex-col bg-ppds-bg overflow-hidden">
+        <header className="bg-ppds-header border-b border-gray-800 relative flex-shrink-0">
+          <Link to="/" className="block py-3 hover:opacity-90 transition-opacity">
+            <img src="/orchestrator-banner.png" alt="Orchestrator" className="max-w-sm mx-auto" />
           </Link>
-          <div className="absolute bottom-3 right-4 flex items-center gap-3">
+          <div className="absolute bottom-2 right-4 flex items-center gap-3">
             <Link
               to="/settings"
               className="text-xs text-gray-400 hover:text-white transition-colors"
@@ -62,7 +61,7 @@ function App() {
             <SoundToggle enabled={sounds.enabled} onToggle={sounds.toggle} />
           </div>
         </header>
-        <main className="p-6">
+        <main className="flex-1 overflow-hidden p-4">
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/session/:repoId/:sessionId" element={<SessionView />} />
