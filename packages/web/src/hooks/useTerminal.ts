@@ -54,6 +54,9 @@ export function useTerminal(options: UseTerminalOptions): UseTerminalReturn {
 
   // Initialize terminal on mount
   useEffect(() => {
+    // Local flag scoped to this effect invocation (not shared across StrictMode re-runs)
+    let isCancelled = false;
+
     if (!containerRef.current) return;
 
     // Dynamically import xterm to avoid SSR issues
@@ -64,6 +67,11 @@ export function useTerminal(options: UseTerminalOptions): UseTerminalReturn {
 
       // Import CSS
       await import('@xterm/xterm/css/xterm.css');
+
+      // Check if effect was cleaned up during async imports (StrictMode race condition)
+      if (isCancelled || !containerRef.current) {
+        return;
+      }
 
       const terminal = new Terminal({
         cursorBlink: true,
@@ -145,6 +153,8 @@ export function useTerminal(options: UseTerminalOptions): UseTerminalReturn {
     initTerminal();
 
     return () => {
+      // Mark this effect invocation as cancelled to prevent async initTerminal from attaching
+      isCancelled = true;
       if (terminalRef.current) {
         terminalRef.current.dispose();
         terminalRef.current = null;
