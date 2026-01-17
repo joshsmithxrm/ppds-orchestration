@@ -129,6 +129,8 @@ export class GitUtils {
   async removeWorktree(worktreePath: string): Promise<WorktreeRemovalResult> {
     try {
       await this.git.raw(['worktree', 'remove', worktreePath, '--force']);
+      // Prune stale worktree metadata to ensure clean state
+      await this.git.raw(['worktree', 'prune']);
       return { success: true };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -141,6 +143,8 @@ export class GitUtils {
       ) {
         // Worktree is unregistered, but folder might still exist - try to clean up
         await this.tryDeleteFolder(worktreePath);
+        // Prune stale worktree metadata
+        await this.git.raw(['worktree', 'prune']);
         return { success: true, notFound: true };
       }
 
@@ -149,6 +153,8 @@ export class GitUtils {
       if (msg.includes('Permission denied')) {
         const cleaned = await this.tryDeleteFolder(worktreePath);
         if (cleaned) {
+          // Prune stale worktree metadata
+          await this.git.raw(['worktree', 'prune']);
           return { success: true };
         }
       }
